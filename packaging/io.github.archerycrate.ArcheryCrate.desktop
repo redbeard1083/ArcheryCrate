@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ArcheryCrate
+GenericName=Laptop Control Center
+Comment=Performance modes, fan curves, battery charge limit, keyboard lighting and graphics for ASUS laptops
+Exec=archerycrate
+Icon=io.github.archerycrate.ArcheryCrate
+Terminal=false
+StartupNotify=true
+Categories=System;Settings;HardwareSettings;
+Keywords=asus;asusctl;fan;battery;rgb;performance;rog;
+StartupWMClass=io.github.archerycrate.ArcheryCrate

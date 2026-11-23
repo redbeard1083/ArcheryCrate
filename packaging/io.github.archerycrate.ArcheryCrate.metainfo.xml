@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.archerycrate.ArcheryCrate</id>
+  <name>ArcheryCrate</name>
+  <summary>Control center for ASUS laptops on Linux</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      ArcheryCrate switches performance modes, draws custom fan curves, sets a battery charge
+      limit, controls keyboard lighting and graphics modes on ASUS laptops. It uses asusctl
+      and supergfxctl on the host when they are installed.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.archerycrate.ArcheryCrate.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-11-21"/>
+  </releases>
+</component>

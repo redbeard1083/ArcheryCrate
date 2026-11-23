@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Same artwork as the tray icon (tray::icon_rgba): red ring, soft pink halo, white core. -->
+  <circle cx="128" cy="128" r="98.6" fill="none" stroke="#ff2850" stroke-width="38.4"/>
+  <circle cx="128" cy="128" r="58.9" fill="#ff7896" fill-opacity="0.78"/>
+  <circle cx="128" cy="128" r="48.6" fill="#ffffff"/>
+</svg>

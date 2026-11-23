@@ -1,0 +1,7 @@
+# Build output
+/target
+/packaging/out/
+# Downloaded build tools (appimagetool)
+/packaging/tools/
+# Screenshots and scratch folders from checks
+/shots/
