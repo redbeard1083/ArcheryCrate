@@ -10,7 +10,7 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
-  # Run asusctl, supergfxctl and pkexec on the host (flatpak-spawn --host).
+  # Run asusctl, cardwire and pkexec on the host (flatpak-spawn --host).
   - --talk-name=org.freedesktop.Flatpak
   # Tray icon.
   - --talk-name=org.kde.StatusNotifierWatcher

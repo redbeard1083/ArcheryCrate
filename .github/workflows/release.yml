@@ -1,0 +1,81 @@
+# Pushing a version tag (e.g. v0.1.0) builds ArcheryCrate and publishes it as a GitHub Release.
+# The AppImage must build; the Flatpak is attached too when its build succeeds.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to (re)publish, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  appimage:
+    # Built on an older Ubuntu so the AppImage also runs on older Linux versions (glibc).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev librsvg2-bin file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - name: Build the AppImage
+        run: bash packaging/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: packaging/out/ArcheryCrate-x86_64.AppImage
+
+  flatpak:
+    runs-on: ubuntu-24.04
+    # Not yet tested: a failure here doesn't stop the release.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Flatpak tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder python3-aiohttp python3-tomlkit
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Build the Flatpak
+        run: bash packaging/build-flatpak.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: packaging/out/ArcheryCrate.flatpak
+
+  release:
+    needs: [appimage, flatpak]
+    if: ${{ always() && needs.appimage.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          version="${TAG#v}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "ArcheryCrate $version" \
+              --notes-file packaging/release-notes.md
+          fi
