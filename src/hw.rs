@@ -397,7 +397,30 @@ impl Sampler {
 /// * amdgpu reports the maker of its video memory chips only for a card with its own VRAM;
 /// * a discrete GPU sits behind its own PCIe switch, so it's deeper in the PCI tree than
 ///   an integrated one (Intel at 00:02.0, AMD APUs behind the internal 00:08.x bridge).
-fn is_discrete(dev: &Path) -> bool {
+/// Wake the discrete GPU for a moment so it looks at its ports again.
+///
+/// After Cardwire unblocks it (Eco → Standard), the discrete GPU stays in its deepest sleep
+/// (D3cold) and doesn't notice a monitor plugged into the HDMI port, which it drives on the
+/// G14. Opening its render node resumes it; on resume the driver re-detects connected
+/// monitors. The node is held open briefly, then released so the GPU can sleep again if
+/// nothing needs it. Needs no password (render nodes are open to the signed-in person).
+pub fn wake_dgpu() -> Result<String, String> {
+    let dir = fs::read_dir("/sys/class/drm").map_err(|e| e.to_string())?;
+    let node = dir
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("renderD"))
+        .find(|n| is_discrete(&Path::new("/sys/class/drm").join(n).join("device")))
+        .ok_or("no discrete GPU found (still switched off?)")?;
+    let path = Path::new("/dev/dri").join(&node);
+    let file = fs::File::open(&path).map_err(|e| format!("could not open {}: {e}", path.display()))?;
+    // Long enough for the GPU to resume and probe its outputs (~0.3 s here).
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    drop(file);
+    Ok(format!("woke the discrete GPU ({node}) so it sees connected monitors"))
+}
+
+pub fn is_discrete(dev: &Path) -> bool {
     if read(dev.join("vendor")).as_deref() == Some("0x10de") {
         return true;
     }

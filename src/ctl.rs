@@ -20,6 +20,9 @@ pub struct Action {
     pub needs_reboot: bool,
     /// Commands run, in order, after the change above succeeded (all must succeed).
     pub post: Vec<Vec<String>>,
+    /// After success, wake the discrete GPU so it detects connected monitors (see
+    /// `hw::wake_dgpu`): set when graphics come back to Standard.
+    pub wake_dgpu: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -331,6 +334,14 @@ pub fn run_action(action: Action, tools: &Tools) -> Outcome {
                         break;
                     }
                 }
+            }
+        }
+        if ok && action.wake_dgpu {
+            // Give Cardwire a moment to finish unblocking it, then wake it.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            match crate::hw::wake_dgpu() {
+                Ok(t) => log.push(t),
+                Err(e) => log.push(format!("  (could not wake the discrete GPU: {e})")),
             }
         }
         log.push(format!("took {} ms", start.elapsed().as_millis()));
@@ -908,6 +919,9 @@ pub fn set_gfx(mode: GfxMode, st: &GfxState) -> Action {
         sysfs,
         needs_reboot: reboot,
         post,
+        // Back to Standard right away (not via a restart): wake the discrete GPU so a monitor
+        // on its HDMI port is found without anyone having to touch the GPU first.
+        wake_dgpu: mode == GfxMode::Standard && !reboot,
     }
 }
 
@@ -983,6 +997,9 @@ mod tests {
         let back = set_gfx(GfxMode::Standard, &st(0, 1, true));
         assert_eq!(cmds(&back), ["cardwire set hybrid"]);
         assert!(back.sysfs.is_empty() && !back.needs_reboot);
+        // Back to Standard wakes the discrete GPU (so it finds an HDMI monitor); Ultimate doesn't.
+        assert!(back.wake_dgpu);
+        assert!(!u.wake_dgpu);
         // Coming back from the firmware's "dGPU off": clear it and rescan the PCI bus.
         let revive = set_gfx(GfxMode::Standard, &st(1, 1, true));
         assert!(revive.groups.is_empty());
