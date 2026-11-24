@@ -186,7 +186,6 @@ pub struct CrateApp {
     attr_edit: BTreeMap<String, i64>,
     /// Slider values just sent: shown until the readings catch up (or a few seconds pass).
     limits_sent: Option<(Instant, BTreeMap<String, i64>)>,
-    limits_watch: crate::power::LimitsWatcher,
     reboot_pending: bool,
     shot: Option<Shot>,
     /// "show" / "quit" requests from the tray process (or a second launch).
@@ -330,7 +329,6 @@ impl CrateApp {
             charge_edit: None,
             attr_edit: BTreeMap::new(),
             limits_sent: None,
-            limits_watch: Default::default(),
             reboot_pending: false,
             shot: screenshot.map(|path| Shot {
                 path,
@@ -569,11 +567,6 @@ impl CrateApp {
                     }
                     self.refresh_panel_info(Duration::from_millis(2500));
                 }
-                if !self.settings.tray_icon && self.shot.is_none() {
-                    if let Some(a) = self.limits_watch.check(&self.snap, &self.tools) {
-                        self.run(a);
-                    }
-                }
             }
             // Extra readings right after a change shouldn't squeeze the history graphs.
             if self.last_sample.elapsed() >= Duration::from_millis(900) {
@@ -689,7 +682,7 @@ impl CrateApp {
             }
             if let Some(b) = self.snap.battery_pct {
                 let plug = if self.snap.on_ac == Some(true) { " ⚡" } else { "" };
-                pill(ui, &format!("Battery {b}%{plug}"), if b < 20 { ACCENT() } else { GREEN() });
+                pill(ui, &format!("Battery {b}%{plug}"), battery_color(b as f32));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
@@ -698,7 +691,7 @@ impl CrateApp {
                     ui.label(RichText::new("Applying…").color(DIM()));
                 } else if let Some((at, o)) = &self.toast {
                     if at.elapsed() < Duration::from_secs(8) {
-                        let (c, mark) = if o.ok { (GREEN(), "✔") } else { (ACCENT(), "✖") };
+                        let (c, mark) = if o.ok { (GREEN(), "✔") } else { (RED(), "✖") };
                         let via = if o.ok && !o.via.is_empty() { format!("  (via {})", o.via) } else { String::new() };
                         ui.label(RichText::new(format!("{mark} {}{via}", o.label)).color(c));
                     }
@@ -1056,14 +1049,14 @@ impl CrateApp {
                     (Some(u), Some(t)) => format!("{u:.1} / {t:.1} GB ({:.0}%)", 100.0 * u / t.max(0.1)),
                     _ => "–".into(),
                 });
-                sparkline(ui, &hist(&self.hist_mem), 0.0, 100.0, GREEN(), 38.0);
+                sparkline(ui, &hist(&self.hist_mem), 0.0, 100.0, level_color(self.hist_mem.back().copied().unwrap_or(0.0) / 100.0, GREEN()), 38.0);
                 stat_row(ui, &format!("{gpu_name} memory"), match gpu.as_ref().map(|x| (x.vram_used_mb, x.vram_total_mb)) {
                     Some((Some(u), Some(t))) => {
                         format!("{:.1} / {:.1} GB ({:.0}%)", u as f32 / 1024.0, t as f32 / 1024.0, 100.0 * u as f32 / t.max(1) as f32)
                     }
                     _ => "–".into(),
                 });
-                sparkline(ui, &hist(&self.hist_vram), 0.0, 100.0, CYAN(), 38.0);
+                sparkline(ui, &hist(&self.hist_vram), 0.0, 100.0, level_color(self.hist_vram.back().copied().unwrap_or(0.0) / 100.0, GREEN()), 38.0);
             });
             card(&mut cols[1], "Fans", |ui| {
                 if s.fans.is_empty() {
@@ -1077,7 +1070,7 @@ impl CrateApp {
                         });
                     });
                     if let Some(h) = self.hist_fans.get(i) {
-                        sparkline(ui, &hist(h), 0.0, 6500.0, if i == 0 { ACCENT() } else { CYAN() }, 38.0);
+                        sparkline(ui, &hist(h), 0.0, 6500.0, CYAN(), 38.0);
                     }
                 }
             });
@@ -1091,13 +1084,7 @@ impl CrateApp {
             }
             for d in &s.disks {
                 let used = d.used_frac();
-                let color = if used >= 0.9 {
-                    ACCENT()
-                } else if used >= 0.75 {
-                    AMBER()
-                } else {
-                    GREEN()
-                };
+                let color = level_color(used, GREEN());
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(&d.name).strong().color(TEXT()));
                     ui.label(RichText::new(&d.mount).color(DIM()).size(12.5));
@@ -1131,7 +1118,7 @@ impl CrateApp {
                     (Some(w), "Charging") if w > 0.1 => format!("+{w:.1} W"),
                     (_, st) => st.to_string(),
                 };
-                gauge(ui, g.min(120.0), b / 100.0, &format!("{b:.0}"), "%", &sub, if b < 20.0 { ACCENT() } else { GREEN() });
+                gauge(ui, g.min(120.0), b / 100.0, &format!("{b:.0}"), "%", &sub, battery_color(b));
                 ui.add_space(16.0);
                 ui.vertical(|ui| {
                     ui.add_space(10.0);
@@ -1164,7 +1151,7 @@ impl CrateApp {
         let clock_text = |m: u32| if m == 0 { "clock idle".to_string() } else { format!("{m} MHz") };
         let load_graph = |ui: &mut Ui, h: &[f32]| {
             let gh = (ui.available_height() - 4.0).max(36.0);
-            history_graph(ui, h, (0.0, 100.0), &[50.0, 100.0], "%", "%", CYAN(), gh, true);
+            history_graph(ui, h, (0.0, 100.0), &[50.0, 100.0], "%", "%", CYAN(), gh, Line::Rainbow);
         };
         let gpu = home_gpu(&s);
         let gpu_title = match &gpu {
@@ -1240,12 +1227,12 @@ impl CrateApp {
                     (Some(u), Some(t)) => format!("{u:.1} / {t:.0} GB"),
                     _ => "–".into(),
                 });
-                sparkline(ui, &hist(&self.hist_mem), 0.0, 100.0, GREEN(), half);
+                sparkline(ui, &hist(&self.hist_mem), 0.0, 100.0, level_color(self.hist_mem.back().copied().unwrap_or(0.0) / 100.0, GREEN()), half);
                 stat_row(ui, "GPU memory", match gpu.as_ref().map(|x| (x.vram_used_mb, x.vram_total_mb)) {
                     Some((Some(u), Some(t))) => format!("{:.1} / {:.1} GB", u as f32 / 1024.0, t as f32 / 1024.0),
                     _ => "–".into(),
                 });
-                sparkline(ui, &hist(&self.hist_vram), 0.0, 100.0, CYAN(), half);
+                sparkline(ui, &hist(&self.hist_vram), 0.0, 100.0, level_color(self.hist_vram.back().copied().unwrap_or(0.0) / 100.0, GREEN()), half);
             });
         });
         ui.add_space(gap);
@@ -1259,14 +1246,14 @@ impl CrateApp {
                 for (i, (label, rpm)) in s.fans.iter().enumerate() {
                     stat_row(ui, &fan_label(label), format!("{rpm} rpm"));
                     if let Some(q) = self.hist_fans.get(i) {
-                        sparkline(ui, &hist(q), 0.0, 6500.0, if i == 0 { ACCENT() } else { CYAN() }, h);
+                        sparkline(ui, &hist(q), 0.0, 6500.0, CYAN(), h);
                     }
                 }
             });
             card_sized(&mut c[1], "Storage", tile_h, |ui| {
                 for d in &s.disks {
                     let used = d.used_frac();
-                    let color = if used >= 0.9 { ACCENT() } else if used >= 0.75 { AMBER() } else { GREEN() };
+                    let color = level_color(used, GREEN());
                     stat_row(
                         ui,
                         &d.name,
@@ -1284,7 +1271,7 @@ impl CrateApp {
             });
             card_sized(&mut c[2], "Battery", tile_h, |ui| {
                 let b = s.battery_pct.unwrap_or(0) as f32;
-                let color = if b < 20.0 { ACCENT() } else { GREEN() };
+                let color = battery_color(b);
                 let sub = match (s.battery_power_w, s.battery_status.as_str()) {
                     (Some(w), "Discharging") if w > 0.1 => format!("−{w:.1} W"),
                     (Some(w), "Charging") if w > 0.1 => format!("+{w:.1} W"),
@@ -1329,6 +1316,9 @@ impl CrateApp {
     fn power_limits_card(&mut self, ui: &mut Ui) {
         let s = &self.snap;
         let limits: Vec<crate::hw::Attr> = s.power_limits().into_iter().cloned().collect();
+        // What each slider shows for this mode (see `Snapshot::power_limit_shown`).
+        let now: BTreeMap<String, i64> =
+            limits.iter().filter_map(|a| Some((a.name.clone(), s.power_limit_shown(a)?))).collect();
         let profile = s.profile.clone().unwrap_or_default();
         let mode = profile_title(&profile);
         let on_ac = s.on_ac.unwrap_or(true);
@@ -1336,12 +1326,11 @@ impl CrateApp {
         let fan_curve_on = s.cpu_curve_enabled == Some(true);
         // Values just sent stay on the sliders until the readings show them.
         if let Some((t, sent)) = &self.limits_sent {
-            let caught_up = sent.iter().all(|(n, v)| s.attr(n).and_then(|a| a.current) == Some(*v));
+            let caught_up = sent.iter().all(|(n, v)| now.get(n) == Some(v));
             if caught_up || t.elapsed() > Duration::from_secs(6) {
                 self.limits_sent = None;
             }
         }
-        let differs = limits.iter().any(|a| a.default.is_some() && a.current != a.default);
         let title = format!("Power limits · {mode}, {}", if on_ac { "plugged in" } else { "on battery" });
         let mut send: Vec<(String, i64)> = Vec::new();
         let mut to_stock = false;
@@ -1363,7 +1352,7 @@ impl CrateApp {
             } else {
                 format!(
                     "{mode} uses the laptop's stock limits: the mode's own built-in limits apply. The laptop doesn't \
-                     report those, so at stock each slider sits on its stock mark."
+                     report those numbers, so the sliders sit on their stock marks. Moving one gives {mode} limits of its own."
                 )
             };
             ui.label(RichText::new(status).color(if tuned { profile_color(&profile) } else { DIM() }));
@@ -1374,7 +1363,7 @@ impl CrateApp {
             for a in &limits {
                 let (lo, hi) = (a.min.unwrap_or(5), a.max.unwrap_or(150));
                 let unit = power_limit_unit(&a.name);
-                let cur = a.current.unwrap_or(hi);
+                let cur = now.get(&a.name).copied().unwrap_or(hi);
                 let shown = self
                     .limits_sent
                     .as_ref()
@@ -1424,7 +1413,7 @@ impl CrateApp {
                 ui.add_space(8.0);
             }
             ui.horizontal(|ui| {
-                ui.add_enabled_ui(tuned || differs, |ui| {
+                ui.add_enabled_ui(tuned, |ui| {
                     if ui.button(format!("Back to stock for {mode}")).clicked() {
                         to_stock = true;
                     }
@@ -1440,8 +1429,8 @@ impl CrateApp {
         if to_stock {
             let back: Vec<(String, i64)> = limits.iter().filter_map(|a| Some((a.name.clone(), a.default?))).collect();
             self.attr_edit.clear();
-            self.limits_sent = Some((Instant::now(), back.iter().cloned().collect()));
-            self.run(ctl::power_limits(&profile, &back, tuned, fan_curve_on, true));
+            self.limits_sent = Some((Instant::now(), back.into_iter().collect()));
+            self.run(ctl::power_limits(&profile, &[], tuned, fan_curve_on, true));
         } else if !send.is_empty() {
             let mut map = self.limits_sent.take().map(|(_, m)| m).unwrap_or_default();
             map.extend(send.iter().cloned());
@@ -1644,7 +1633,7 @@ impl CrateApp {
             card(&mut cols[0], "Battery", |ui| {
                 ui.horizontal(|ui| {
                     let b = s.battery_pct.unwrap_or(0) as f32;
-                    gauge(ui, 150.0, b / 100.0, &format!("{b:.0}"), "%", &s.battery_status, if b < 20.0 { ACCENT() } else { GREEN() });
+                    gauge(ui, 150.0, b / 100.0, &format!("{b:.0}"), "%", &s.battery_status, battery_color(b));
                     ui.vertical(|ui| {
                         ui.add_space(14.0);
                         stat_row(ui, "Status", s.battery_status.clone());
@@ -2254,6 +2243,22 @@ impl CrateApp {
                 }
             });
         });
+        card(ui, "About ArcheryCrate", |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("ArcheryCrate").size(18.0).color(TEXT()));
+                ui.label(
+                    RichText::new(format!("version {}", env!("CARGO_PKG_VERSION")))
+                        .size(18.0)
+                        .strong()
+                        .color(CYAN()),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("New versions and release notes:").color(DIM()));
+                ui.hyperlink_to("github.com/redbeard1083/ArcheryCrate/releases", RELEASES_URL);
+            });
+        });
+        ui.add_space(4.0);
         card(ui, "About this laptop", |ui| {
             let s = &self.snap;
             let t = &self.tools;
@@ -2287,7 +2292,7 @@ impl CrateApp {
                 for (secs, o) in &background {
                     card(ui, "", |ui| {
                         ui.horizontal(|ui| {
-                            let (c, m) = if o.ok { (GREEN(), "✔") } else { (ACCENT(), "✖") };
+                            let (c, m) = if o.ok { (GREEN(), "✔") } else { (RED(), "✖") };
                             ui.label(RichText::new(m).color(c));
                             ui.label(RichText::new(&o.label).strong());
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2310,7 +2315,7 @@ impl CrateApp {
         for (at, o) in self.log.iter().rev() {
             card(ui, "", |ui| {
                 ui.horizontal(|ui| {
-                    let (c, m) = if o.ok { (GREEN(), "✔") } else { (ACCENT(), "✖") };
+                    let (c, m) = if o.ok { (GREEN(), "✔") } else { (RED(), "✖") };
                     ui.label(RichText::new(m).color(c));
                     ui.label(RichText::new(&o.label).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2375,7 +2380,7 @@ impl CrateApp {
                     let (m, c) = match ok {
                         None => ("…", DIM()),
                         Some(true) => ("✔", GREEN()),
-                        Some(false) => ("✖", ACCENT()),
+                        Some(false) => ("✖", RED()),
                     };
                     ui.label(RichText::new(m).color(c).strong());
                     ui.label(RichText::new(what).color(TEXT()));
@@ -2392,7 +2397,7 @@ impl CrateApp {
                 let (m, c, detail) = match (known, t.cardwire) {
                     (false, _) => ("…", DIM(), ""),
                     (true, Some(true)) => ("✔", GREEN(), "switches between Eco and Standard instantly"),
-                    (true, Some(false)) => ("✖", ACCENT(), "installed, but its service isn't running"),
+                    (true, Some(false)) => ("✖", RED(), "installed, but its service isn't running"),
                     (true, None) => ("✖", AMBER(), "not installed: Eco can't switch back without a restart"),
                 };
                 ui.label(RichText::new(m).color(c).strong());
@@ -2500,7 +2505,7 @@ fn seconds(n: usize) -> String {
 /// A 0–100 % history in the same style as the temperature graphs.
 fn temp_like_load_graph(ui: &mut Ui, history: &[f32]) {
     // rgb: in Neon the load lines are a moving rainbow.
-    history_graph(ui, history, (0.0, 100.0), &[25.0, 50.0, 75.0, 100.0], "%", "%", CYAN(), 110.0, true);
+    history_graph(ui, history, (0.0, 100.0), &[25.0, 50.0, 75.0, 100.0], "%", "%", CYAN(), 110.0, Line::Rainbow);
 }
 
 /// The palette for a theme choice (`system`: the desktop prefers dark, when known).
@@ -2540,10 +2545,17 @@ fn ago(d: Duration) -> String {
     }
 }
 
+const RELEASES_URL: &str = "https://github.com/redbeard1083/ArcheryCrate/releases";
+
 fn temp_color(t: f32) -> Color32 {
-    if t >= 85.0 {
-        ACCENT()
-    } else if t >= 70.0 {
+    heat_color(t)
+}
+
+/// Battery: green, amber when low, red when nearly empty.
+fn battery_color(b: f32) -> Color32 {
+    if b < 15.0 {
+        RED()
+    } else if b < 30.0 {
         AMBER()
     } else {
         GREEN()

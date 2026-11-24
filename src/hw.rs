@@ -134,22 +134,15 @@ impl Snapshot {
         self.tunings.iter().find(|t| t.profile == profile && t.on_ac == on_ac)
     }
 
-    /// The active mode has no limits of its own, yet the limits in place aren't stock: they
-    /// were carried over from another mode (asusd leaves them when a mode without limits of
-    /// its own starts). Those are the stock values to put back.
-    pub fn leftover_limits(&self) -> Option<Vec<(String, i64)>> {
-        if self.profile.is_none() || self.tuning_now().is_some_and(|t| t.enabled) {
-            return None;
+    /// The value a power-limit slider shows for the active mode. With limits of its own, the
+    /// ones asusd keeps for it. Without, the stock setting: the firmware then uses the mode's
+    /// own limits, and the attribute's "current" value is only the last number written (it
+    /// stays behind after leaving a mode that had its own).
+    pub fn power_limit_shown(&self, a: &Attr) -> Option<i64> {
+        match self.tuning_now().filter(|t| t.enabled) {
+            Some(t) => t.values.iter().find(|(n, _)| *n == a.name).map(|(_, v)| *v).or(a.current),
+            None => a.default.or(a.current),
         }
-        let back: Vec<(String, i64)> = self
-            .power_limits()
-            .into_iter()
-            .filter_map(|a| match (a.current, a.default) {
-                (Some(c), Some(d)) if c != d => Some((a.name.clone(), d)),
-                _ => None,
-            })
-            .collect();
-        (!back.is_empty()).then_some(back)
     }
 
     /// The graphics mode, from the MUX, Cardwire and the firmware's dGPU switch.

@@ -318,32 +318,3 @@ fn go_charger(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
     saved.save();
 }
 
-/// Keeps each mode's power limits its own. asusd puts a mode's own limits in place when
-/// that mode starts, but a mode without limits of its own just keeps whatever the previous
-/// mode had. This notices that (two readings in a row, so a switch still settling isn't
-/// mistaken for it) and puts the stock limits back. Runs in the tray process, or in the
-/// window when the tray is off.
-#[derive(Default)]
-pub struct LimitsWatcher {
-    seen: u8,
-    last_run: Option<std::time::Instant>,
-}
-
-impl LimitsWatcher {
-    pub fn check(&mut self, s: &crate::hw::Snapshot, tools: &Tools) -> Option<ctl::Action> {
-        tools.asusctl.as_ref()?;
-        let Some(back) = s.leftover_limits() else {
-            self.seen = 0;
-            return None;
-        };
-        self.seen = self.seen.saturating_add(1);
-        if self.seen < 2 || self.last_run.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(30)) {
-            return None;
-        }
-        self.seen = 0;
-        self.last_run = Some(std::time::Instant::now());
-        let profile = s.profile.clone()?;
-        let tuning_on = s.tuning_now().is_some_and(|t| t.enabled);
-        Some(ctl::power_limits(&profile, &back, tuning_on, s.cpu_curve_enabled == Some(true), true))
-    }
-}

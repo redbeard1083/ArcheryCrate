@@ -791,9 +791,23 @@ pub fn set_attr(name: &str, path: &Path, value: i64) -> Action {
 /// switched on while that mode has a custom fan curve. So when tuning is off: turn the fan
 /// curve on for a moment (the curve stored for the mode, normally the stock one), switch
 /// tuning on, and turn the fan curve back off; the limits stay with the mode from then on.
-/// Back to stock: the stock values go in, then tuning goes off.
+/// Back to stock (`stock`, `values` ignored): tuning goes off and the mode is chosen again
+/// (by way of another mode), which makes the firmware put its own limits for it back in place.
+/// No numbers are written: writing the "stock" maximums would override the mode's real limits.
 pub fn power_limits(profile: &str, values: &[(String, i64)], tuning_on: bool, fan_curve_on: bool, stock: bool) -> Action {
     let p = asusctl_profile(profile);
+    if stock {
+        let other = if p == "Balanced" { "Quiet" } else { "Balanced" };
+        return Action {
+            label: format!("{POWER_LIMITS_LABEL} {} back to stock", crate::app::profile_title(profile)),
+            groups: vec![
+                vec![argv(&["asusctl", "profile", "tuning", "false"])],
+                vec![argv(&["asusctl", "profile", "set", other])],
+                vec![argv(&["asusctl", "profile", "set", p])],
+            ],
+            ..Default::default()
+        };
+    }
     let curve = |on: &str| {
         vec![
             argv(&["asusctl", "fan-curve", "--mod-profile", p, "--enable-fan-curves", on]),
@@ -813,16 +827,9 @@ pub fn power_limits(profile: &str, values: &[(String, i64)], tuning_on: bool, fa
     for (name, v) in values {
         groups.push(vec![argv(&["asusctl", "armoury", "set", name, &v.to_string()])]);
     }
-    if stock {
-        groups.push(vec![argv(&["asusctl", "profile", "tuning", "false"])]);
-    }
     let mode = crate::app::profile_title(profile);
-    let label = if stock {
-        format!("{POWER_LIMITS_LABEL} {mode} back to stock")
-    } else {
-        let parts: Vec<String> = values.iter().map(|(n, v)| format!("{} {v} W", crate::app::attr_title(n))).collect();
-        format!("{POWER_LIMITS_LABEL} {mode} → {}", parts.join(", "))
-    };
+    let parts: Vec<String> = values.iter().map(|(n, v)| format!("{} {v} W", crate::app::attr_title(n))).collect();
+    let label = format!("{POWER_LIMITS_LABEL} {mode} → {}", parts.join(", "));
     Action { label, groups, ..Default::default() }
 }
 

@@ -61,23 +61,23 @@ fn pick(dark: Color32, light: Color32, neon: Color32) -> Color32 {
 
 #[allow(non_snake_case)]
 pub fn BG() -> Color32 {
-    pick(rgb(13, 13, 16), rgb(240, 240, 244), rgb(7, 5, 16))
+    pick(rgb(13, 13, 16), rgb(240, 240, 244), rgb(2, 1, 6))
 }
 #[allow(non_snake_case)]
 pub fn SIDEBAR() -> Color32 {
-    pick(rgb(19, 19, 24), rgb(228, 228, 235), rgb(11, 7, 24))
+    pick(rgb(19, 19, 24), rgb(228, 228, 235), rgb(5, 3, 11))
 }
 #[allow(non_snake_case)]
 pub fn CARD() -> Color32 {
-    pick(rgb(26, 26, 32), rgb(255, 255, 255), rgb(17, 11, 34))
+    pick(rgb(26, 26, 32), rgb(255, 255, 255), rgb(7, 4, 15))
 }
 #[allow(non_snake_case)]
 pub fn CARD_HI() -> Color32 {
-    pick(rgb(34, 34, 42), rgb(234, 234, 241), rgb(32, 18, 58))
+    pick(rgb(34, 34, 42), rgb(234, 234, 241), rgb(18, 10, 34))
 }
 #[allow(non_snake_case)]
 pub fn LINE() -> Color32 {
-    pick(rgb(46, 46, 56), rgb(212, 212, 222), rgb(86, 36, 132))
+    pick(rgb(46, 46, 56), rgb(212, 212, 222), rgb(70, 30, 110))
 }
 #[allow(non_snake_case)]
 pub fn TEXT() -> Color32 {
@@ -108,23 +108,60 @@ pub fn GREEN() -> Color32 {
 pub fn AMBER() -> Color32 {
     pick(rgb(255, 176, 32), rgb(184, 112, 0), rgb(255, 232, 0))
 }
+/// Something is wrong or too hot (red in every theme, never the theme's accent).
+#[allow(non_snake_case)]
+pub fn RED() -> Color32 {
+    pick(rgb(255, 64, 64), rgb(204, 20, 20), rgb(255, 36, 36))
+}
+#[allow(non_snake_case)]
+pub fn ORANGE() -> Color32 {
+    pick(rgb(255, 128, 40), rgb(206, 84, 0), rgb(255, 120, 0))
+}
+
+/// A temperature's colour on one scale everywhere: cyan when cool, then green, yellow,
+/// orange and red as it climbs (smoothly in between).
+pub fn heat_color(t: f32) -> Color32 {
+    let stops = [(40.0, CYAN()), (55.0, GREEN()), (70.0, AMBER()), (80.0, ORANGE()), (90.0, RED())];
+    if t <= stops[0].0 {
+        return stops[0].1;
+    }
+    for w in stops.windows(2) {
+        let ((a, ca), (b, cb)) = (w[0], w[1]);
+        if t <= b {
+            return lerp_color(ca, cb, (t - a) / (b - a));
+        }
+    }
+    stops[stops.len() - 1].1
+}
+
+/// A level that's fine until it gets high (memory, storage): `base`, then amber, then red.
+pub fn level_color(frac: f32, base: Color32) -> Color32 {
+    if frac >= 0.92 {
+        RED()
+    } else if frac >= 0.80 {
+        AMBER()
+    } else {
+        base
+    }
+}
+
 /// Background inside graphs and the fan-curve editor.
 #[allow(non_snake_case)]
 pub fn GRAPH_BG() -> Color32 {
-    pick(rgb(18, 18, 22), rgb(246, 246, 250), rgb(9, 5, 20))
+    pick(rgb(18, 18, 22), rgb(246, 246, 250), rgb(1, 0, 4))
 }
 #[allow(non_snake_case)]
 pub fn GRID() -> Color32 {
-    pick(rgb(32, 32, 40), rgb(226, 226, 234), rgb(42, 20, 74))
+    pick(rgb(32, 32, 40), rgb(226, 226, 234), rgb(28, 14, 48))
 }
 /// Background of command boxes (monospace text).
 #[allow(non_snake_case)]
 pub fn CODE_BG() -> Color32 {
-    pick(rgb(12, 12, 15), rgb(232, 232, 239), rgb(5, 3, 12))
+    pick(rgb(12, 12, 15), rgb(232, 232, 239), rgb(1, 0, 4))
 }
 #[allow(non_snake_case)]
 fn HOVER() -> Color32 {
-    pick(rgb(48, 48, 60), rgb(222, 222, 232), rgb(46, 22, 84))
+    pick(rgb(48, 48, 60), rgb(222, 222, 232), rgb(32, 16, 60))
 }
 
 /// Which palette to use; returns true when it changed (then call `apply_theme`).
@@ -222,7 +259,7 @@ pub fn apply_theme(ctx: &egui::Context) {
     v.window_fill = CARD();
     v.window_stroke = Stroke::new(1.0, LINE());
     v.override_text_color = None;
-    v.extreme_bg_color = pick(rgb(10, 10, 12), rgb(250, 250, 253), rgb(5, 3, 12));
+    v.extreme_bg_color = pick(rgb(10, 10, 12), rgb(250, 250, 253), rgb(1, 0, 4));
     v.faint_bg_color = CARD_HI();
     v.selection.bg_fill = ACCENT_DIM();
     v.selection.stroke = Stroke::new(1.0, ACCENT());
@@ -545,7 +582,16 @@ pub fn sparkline(ui: &mut Ui, values: &[f32], lo: f32, hi: f32, color: Color32, 
 /// A temperature history with a degree scale: gridlines labelled 40°…100°, the line in
 /// `color`, and a dot with the current value at its right end.
 pub fn temp_graph(ui: &mut Ui, values: &[f32], color: Color32, height: f32) {
-    history_graph(ui, values, (30.0, 100.0), &[40.0, 60.0, 80.0, 100.0], "°", "°C", color, height, false);
+    history_graph(ui, values, (30.0, 100.0), &[40.0, 60.0, 80.0, 100.0], "°", "°C", color, height, Line::Heat);
+}
+
+/// How a history line is coloured.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Line {
+    /// In Neon, a moving rainbow (otherwise the given colour).
+    Rainbow,
+    /// Each point by its temperature: cool cyan, green, yellow, orange, hot red.
+    Heat,
 }
 
 /// A history line with a labelled scale: `range` is the bottom and top, `ticks` get gridlines
@@ -561,9 +607,10 @@ pub fn history_graph(
     unit: &str,
     color: Color32,
     height: f32,
-    rgb: bool,
+    line: Line,
 ) {
-    let rgb = rgb && is_neon();
+    let rgb = line == Line::Rainbow && is_neon();
+    let heat = line == Line::Heat;
     let (lo, hi) = range;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = ui.painter();
@@ -579,8 +626,9 @@ pub fn history_graph(
     if values.len() < 2 {
         if let Some(v) = values.last() {
             let at = pos2(plot.right(), y_of(*v));
-            p.circle_filled(at, 4.5, color);
-            p.text(at + vec2(8.0, 0.0), Align2::LEFT_CENTER, format!("{v:.0}{unit}"), FontId::proportional(13.0), color);
+            let c = if heat { heat_color(*v) } else { color };
+            p.circle_filled(at, 4.5, c);
+            p.text(at + vec2(8.0, 0.0), Align2::LEFT_CENTER, format!("{v:.0}{unit}"), FontId::proportional(13.0), c);
         }
         return;
     }
@@ -591,7 +639,15 @@ pub fn history_graph(
         .map(|(i, v)| pos2(plot.left() + plot.width() * i as f32 / (n - 1) as f32, y_of(*v)))
         .collect();
     // The colour along the line: fixed, or (rgb) a rainbow across it that keeps moving.
-    let at = |i: usize| -> Color32 { if rgb { rainbow(i as f32 / n as f32 * 0.8) } else { color } };
+    let at = |i: usize| -> Color32 {
+        if rgb {
+            rainbow(i as f32 / n as f32 * 0.8)
+        } else if heat {
+            heat_color(values[i])
+        } else {
+            color
+        }
+    };
     let alpha = |c: Color32, a: u8| Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a);
     for (i, w) in pts.windows(2).enumerate() {
         p.add(Shape::convex_polygon(
@@ -600,7 +656,7 @@ pub fn history_graph(
             Stroke::NONE,
         ));
     }
-    if rgb {
+    if rgb || heat {
         for (i, w) in pts.windows(2).enumerate() {
             p.line_segment([w[0], w[1]], Stroke::new(7.0, alpha(at(i), 44)));
         }
