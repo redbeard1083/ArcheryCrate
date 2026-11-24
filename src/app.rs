@@ -1717,7 +1717,7 @@ impl CrateApp {
                 if row(ui, &mut st.battery_silent_fans, "Silent fan curves", "(in whichever mode is on)") {
                     changes.push((Item::Fans, st.battery_silent_fans));
                 }
-                if row(ui, &mut st.battery_eco, "Graphics Eco", "(discrete GPU off)") {
+                if row(ui, &mut st.battery_eco, "Graphics Eco", "(not while HDMI is in use)") {
                     changes.push((Item::Gfx, st.battery_eco));
                 }
                 ui.add_space(6.0);
@@ -1993,26 +1993,7 @@ impl CrateApp {
     /// The "this needs a restart" questions, drawn over the whole window.
     fn dialogs(&mut self, ctx: &egui::Context) {
         if let Some(m) = self.gfx_confirm {
-            let (title, body) = if m == GfxMode::Ultimate {
-                (
-                    "Switch to Ultimate?",
-                    "Ultimate wires the screen straight to the discrete GPU. The laptop has to restart \
-                     before it takes effect, and the discrete GPU stays on until you switch back \
-                     (which also needs a restart).",
-                )
-            } else if m == GfxMode::Eco {
-                (
-                    "Leave Ultimate first",
-                    "The discrete GPU is driving the screen, so it can't be switched off yet. \
-                     ArcheryCrate hands the screen back to the integrated GPU now (Standard after the \
-                     restart); then pick Eco again to switch the discrete GPU off.",
-                )
-            } else {
-                (
-                    "Leave Ultimate?",
-                    "Handing the screen back to the integrated GPU only takes effect after the laptop restarts.",
-                )
-            };
+            let (title, body) = gfx_restart_text(m);
             let mut choice = None;
             let mut cancel = false;
             let resp = egui::Modal::new(egui::Id::unique("gfx-confirm")).show(ctx, |ui| {
@@ -2542,6 +2523,31 @@ fn ago(d: Duration) -> String {
         format!("{} min ago", s / 60)
     } else {
         format!("{} h ago", s / 3600)
+    }
+}
+
+/// The title and text of the "this needs a restart" question for switching to `m`
+/// (the window's dialog and the tray's notification).
+pub fn gfx_restart_text(m: GfxMode) -> (&'static str, &'static str) {
+    if m == GfxMode::Ultimate {
+        (
+            "Switch to Ultimate?",
+            "Ultimate wires the screen straight to the discrete GPU. The laptop has to restart \
+             before it takes effect, and the discrete GPU stays on until you switch back \
+             (which also needs a restart).",
+        )
+    } else if m == GfxMode::Eco {
+        (
+            "Leave Ultimate first",
+            "The discrete GPU is driving the screen, so it can't be switched off yet. \
+             ArcheryCrate hands the screen back to the integrated GPU now (Standard after the \
+             restart); then pick Eco again to switch the discrete GPU off.",
+        )
+    } else {
+        (
+            "Leave Ultimate?",
+            "Handing the screen back to the integrated GPU only takes effect after the laptop restarts.",
+        )
     }
 }
 

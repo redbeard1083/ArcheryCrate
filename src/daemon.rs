@@ -122,6 +122,60 @@ fn ask_window_gfx(m: ctl::GfxMode, token: Option<String>) {
     }
 }
 
+/// A desktop notification with buttons; returns the chosen button's name ("" when it was
+/// closed without one), or None when notifications aren't available.
+fn ask_by_notification(title: &str, body: &str, actions: &[(&str, &str)]) -> Option<String> {
+    let mut c = Command::new("notify-send");
+    c.args(["--app-name=ArcheryCrate", "--icon=io.github.archerycrate.ArcheryCrate", "--urgency=critical"]);
+    for (name, text) in actions {
+        c.arg(format!("--action={name}={text}"));
+    }
+    c.args([title, body]).stdin(Stdio::null()).stderr(Stdio::null());
+    let out = c.output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// A plain desktop notification (nothing to choose).
+fn notify(title: &str, body: &str) {
+    let _ = Command::new("notify-send")
+        .args(["--app-name=ArcheryCrate", "--icon=io.github.archerycrate.ArcheryCrate", title, body])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// A graphics switch from the tray menu that needs a restart: ask with a notification, which
+/// shows wherever the person is (the window's question goes unseen when the window is behind
+/// others or closed). Without notifications, the window asks instead.
+fn confirm_gfx_restart(m: ctl::GfxMode, state: ctl::GfxState, tools: Tools, msg_tx: std::sync::mpsc::Sender<Msg>, token: Option<String>) {
+    std::thread::spawn(move || {
+        let (title, body) = crate::app::gfx_restart_text(m);
+        let body = format!("{body}\n\nSave your work in other apps before restarting.");
+        let choice = ask_by_notification(
+            title,
+            &body,
+            &[("now", "Switch and restart now"), ("later", "Switch, I'll restart later")],
+        );
+        let restart_now = match choice.as_deref() {
+            None => return ask_window_gfx(m, token),
+            Some("now") => true,
+            Some("later") => false,
+            Some(_) => return, // closed: nothing changes
+        };
+        let o = ctl::run_action(ctl::set_gfx(m, &state), &tools);
+        let ok = o.ok;
+        let _ = msg_tx.send(Msg::Done(o));
+        if !ok {
+            notify("Graphics mode not changed", "ArcheryCrate couldn't switch; open it and see the Activity page for details.");
+        } else if restart_now {
+            let _ = msg_tx.send(Msg::Done(ctl::run_action(ctl::restart_laptop(), &tools)));
+        } else {
+            notify("Restart to finish", &format!("{} starts after the laptop restarts.", m.title()));
+        }
+    });
+}
+
 enum Event {
     Tray(TrayCmd),
     Tools(Tools),
@@ -253,8 +307,8 @@ pub fn run_tray() {
                 if m == now {
                     // already there
                 } else if m == ctl::GfxMode::Ultimate || mux_now == Some(0) {
-                    // Needs a restart: the window asks first ("restart now / later").
-                    ask_window_gfx(m, token);
+                    // Needs a restart: ask first ("restart now / later") with a notification.
+                    confirm_gfx_restart(m, snap.gfx_state(), tools.clone(), msg_tx.clone(), token);
                 } else {
                     ctl::execute(ctl::set_gfx(m, &snap.gfx_state()), tools.clone(), msg_tx.clone(), || {});
                     std::thread::sleep(Duration::from_millis(600));

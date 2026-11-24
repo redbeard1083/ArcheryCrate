@@ -485,6 +485,24 @@ pub fn dgpu_drives_builtin_screen() -> Option<(u32, u32)> {
     None
 }
 
+/// An external monitor connected to the discrete GPU's own outputs (e.g. "HDMI"): while one
+/// is, the discrete GPU has to stay on to drive it.
+pub fn dgpu_external_display() -> Option<String> {
+    for e in fs::read_dir("/sys/class/drm").ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some((card, conn)) = name.split_once('-') else { continue };
+        if conn.starts_with("eDP") || conn.starts_with("Writeback") || read(e.path().join("status")).as_deref() != Some("connected") {
+            continue;
+        }
+        if is_discrete(&Path::new("/sys/class/drm").join(card).join("device")) {
+            // HDMI-A-1 → HDMI, DP-1 → DisplayPort
+            let kind = conn.split('-').next().unwrap_or(conn);
+            return Some(if kind == "DP" { "DisplayPort".into() } else { kind.to_string() });
+        }
+    }
+    None
+}
+
 pub fn is_discrete(dev: &Path) -> bool {
     if read(dev.join("vendor")).as_deref() == Some("0x10de") {
         return true;

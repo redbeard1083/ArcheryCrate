@@ -173,7 +173,19 @@ fn go_battery(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
 
     // 3. Graphics → Eco.
     if want(Item::Gfx, s.battery_eco) {
+        // A monitor on the graphics card's own port (HDMI on the G14) keeps the card awake
+        // whatever Eco says, so Eco would save nothing and only block apps from the card.
+        let external = crate::hw::dgpu_external_display();
         match snap.gfx_mode() {
+            GfxMode::Standard if external.is_some() => send(note(
+                "Graphics stays Standard",
+                true,
+                format!(
+                    "An external monitor is plugged into the graphics card's {} port, which keeps the card on; \
+                     Eco is skipped while it's connected.",
+                    external.unwrap_or_default()
+                ),
+            )),
             GfxMode::Standard => {
                 let mut a = ctl::set_gfx(GfxMode::Eco, &snap.gfx_state());
                 a.label = "Graphics → Eco (on battery)".into();
