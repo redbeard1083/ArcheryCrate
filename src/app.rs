@@ -106,13 +106,14 @@ pub fn attr_title(name: &str) -> &'static str {
     match name {
         "panel_overdrive" => "Panel overdrive",
         "boot_sound" => "Boot sound",
-        "ppt_apu_sppt" => "APU sustained power",
-        "ppt_platform_sppt" => "Platform power",
-        "ppt_pl1_spl" => "CPU sustained power (SPL)",
-        "ppt_pl2_sppt" => "CPU slow boost (sPPT)",
-        "ppt_fppt" => "CPU fast boost (fPPT)",
-        "nv_dynamic_boost" => "GPU dynamic boost",
-        "nv_temp_target" => "GPU temperature target",
+        "ppt_apu_sppt" => "Processor power limit",
+        "ppt_platform_sppt" => "Combined power limit",
+        "ppt_pl1_spl" => "Processor steady limit",
+        "ppt_pl2_sppt" => "Processor short-burst limit",
+        "ppt_fppt" | "ppt_pl3_fppt" => "Processor quick-burst limit",
+        "nv_dynamic_boost" => "Graphics boost",
+        "nv_temp_target" => "Graphics temperature target",
+        "nv_tgp" => "Graphics card power limit",
         "dgpu_disable" => "dGPU disabled",
         "gpu_mux_mode" => "GPU MUX",
         "charge_mode" => "Charge mode",
@@ -120,6 +121,25 @@ pub fn attr_title(name: &str) -> &'static str {
         "egpu_enable" => "eGPU",
         _ => "Setting",
     }
+}
+
+/// A plain-words line under a power-limit slider.
+fn power_limit_hint(name: &str) -> &'static str {
+    match name {
+        "ppt_apu_sppt" => "Watts the processor (with its built-in graphics) can keep using under steady load",
+        "ppt_platform_sppt" => "Total watts shared by the processor and the graphics card",
+        "ppt_pl1_spl" => "Watts the processor can keep using for as long as the load lasts",
+        "ppt_pl2_sppt" => "Extra watts the processor may use for a few minutes at a time",
+        "ppt_fppt" | "ppt_pl3_fppt" => "Extra watts the processor may use for a few seconds at a time",
+        "nv_dynamic_boost" => "Watts the graphics card may borrow from the processor when it's busy",
+        "nv_temp_target" => "How hot the graphics card may run before it slows down",
+        "nv_tgp" => "Watts the graphics card may use",
+        _ => "",
+    }
+}
+
+fn power_limit_unit(name: &str) -> &'static str {
+    if name == "nv_temp_target" { "°C" } else { "W" }
 }
 
 struct Shot {
@@ -164,6 +184,9 @@ pub struct CrateApp {
     stock_fetching: Option<String>,
     charge_edit: Option<u8>,
     attr_edit: BTreeMap<String, i64>,
+    /// Slider values just sent: shown until the readings catch up (or a few seconds pass).
+    limits_sent: Option<(Instant, BTreeMap<String, i64>)>,
+    limits_watch: crate::power::LimitsWatcher,
     reboot_pending: bool,
     shot: Option<Shot>,
     /// "show" / "quit" requests from the tray process (or a second launch).
@@ -306,6 +329,8 @@ impl CrateApp {
             stock_fetching: None,
             charge_edit: None,
             attr_edit: BTreeMap::new(),
+            limits_sent: None,
+            limits_watch: Default::default(),
             reboot_pending: false,
             shot: screenshot.map(|path| Shot {
                 path,
@@ -543,6 +568,11 @@ impl CrateApp {
                         crate::power::on_change(on_battery, &self.tools, self.tx.clone(), move || c.request_repaint());
                     }
                     self.refresh_panel_info(Duration::from_millis(2500));
+                }
+                if !self.settings.tray_icon && self.shot.is_none() {
+                    if let Some(a) = self.limits_watch.check(&self.snap, &self.tools) {
+                        self.run(a);
+                    }
                 }
             }
             // Extra readings right after a change shouldn't squeeze the history graphs.
@@ -1281,45 +1311,7 @@ impl CrateApp {
         page_title(ui, "Performance", "Choose how much power the laptop may use and how hard it cools.");
         self.profile_tiles(ui, false);
         ui.add_space(8.0);
-        let ppts: Vec<_> = self.snap.attrs.iter().filter(|a| a.name.starts_with("ppt_") || a.name.starts_with("nv_")).cloned().collect();
-        card(ui, "Power limits", |ui| {
-            if ppts.is_empty() {
-                ui.label(RichText::new("This kernel doesn't expose power-limit tuning.").color(DIM()));
-                return;
-            }
-            ui.label(
-                RichText::new("Watts the processor may draw. Changing performance mode can put these back to that mode's defaults.")
-                    .color(DIM()),
-            );
-            ui.add_space(6.0);
-            let mut apply = Vec::new();
-            for a in &ppts {
-                let (lo, hi) = (a.min.unwrap_or(5), a.max.unwrap_or(150));
-                let cur = a.current.unwrap_or(lo);
-                let v = self.attr_edit.entry(a.name.clone()).or_insert(cur);
-                ui.horizontal(|ui| {
-                    ui.add_sized(vec2(210.0, 22.0), egui::Label::new(RichText::new(attr_title(&a.name)).color(TEXT())));
-                    ui.add(egui::Slider::new(v, lo..=hi).suffix(" W"));
-                    ui.label(RichText::new(format!("now {cur} W")).color(DIM()));
-                });
-                if *v != cur {
-                    apply.push((a.name.clone(), a.path.clone(), *v));
-                }
-            }
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.add_enabled_ui(!apply.is_empty(), |ui| {
-                    if accent_button(ui, "Apply power limits").clicked() {
-                        for (n, p, v) in apply.clone() {
-                            self.run(ctl::set_attr(&n, &p, v));
-                        }
-                    }
-                });
-                if ui.button("Undo changes").clicked() {
-                    self.attr_edit.clear();
-                }
-            });
-        });
+        self.power_limits_card(ui);
         ui.add_space(4.0);
         card(ui, "Right now", |ui| {
             let s = &self.snap;
@@ -1329,6 +1321,133 @@ impl CrateApp {
                 stat_row(&mut c[2], "Load", s.cpu_load_pct.map(|l| format!("{l:.0}%")).unwrap_or("–".into()));
             });
         });
+    }
+
+    /// The active mode's power limits. Each mode (plugged in and on battery separately) keeps
+    /// its own, so the sliders move when the mode changes. A slider applies when let go; the
+    /// small mark under it is the stock setting.
+    fn power_limits_card(&mut self, ui: &mut Ui) {
+        let s = &self.snap;
+        let limits: Vec<crate::hw::Attr> = s.power_limits().into_iter().cloned().collect();
+        let profile = s.profile.clone().unwrap_or_default();
+        let mode = profile_title(&profile);
+        let on_ac = s.on_ac.unwrap_or(true);
+        let tuned = s.tuning_now().is_some_and(|t| t.enabled);
+        let fan_curve_on = s.cpu_curve_enabled == Some(true);
+        // Values just sent stay on the sliders until the readings show them.
+        if let Some((t, sent)) = &self.limits_sent {
+            let caught_up = sent.iter().all(|(n, v)| s.attr(n).and_then(|a| a.current) == Some(*v));
+            if caught_up || t.elapsed() > Duration::from_secs(6) {
+                self.limits_sent = None;
+            }
+        }
+        let differs = limits.iter().any(|a| a.default.is_some() && a.current != a.default);
+        let title = format!("Power limits · {mode}, {}", if on_ac { "plugged in" } else { "on battery" });
+        let mut send: Vec<(String, i64)> = Vec::new();
+        let mut to_stock = false;
+        card(ui, &title, |ui| {
+            if limits.is_empty() {
+                ui.label(RichText::new("This laptop's firmware doesn't offer power limits to change.").color(DIM()));
+                return;
+            }
+            ui.label(
+                RichText::new(
+                    "Each mode keeps its own limits, plugged in and on battery. Lower numbers run cooler, quieter \
+                     and longer on battery; higher numbers let games and heavy work go faster.",
+                )
+                .color(DIM()),
+            );
+            ui.add_space(2.0);
+            let status = if tuned {
+                format!("{mode} uses your limits.")
+            } else {
+                format!(
+                    "{mode} uses the laptop's stock limits: the mode's own built-in limits apply. The laptop doesn't \
+                     report those, so at stock each slider sits on its stock mark."
+                )
+            };
+            ui.label(RichText::new(status).color(if tuned { profile_color(&profile) } else { DIM() }));
+            ui.add_space(10.0);
+
+            let label_w = 330.0_f32.min(ui.available_width() * 0.4);
+            let value_w = 150.0;
+            for a in &limits {
+                let (lo, hi) = (a.min.unwrap_or(5), a.max.unwrap_or(150));
+                let unit = power_limit_unit(&a.name);
+                let cur = a.current.unwrap_or(hi);
+                let shown = self
+                    .limits_sent
+                    .as_ref()
+                    .and_then(|(_, m)| m.get(&a.name).copied())
+                    .unwrap_or(cur);
+                let mut v = self.attr_edit.get(&a.name).copied().unwrap_or(shown);
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(vec2(label_w, 44.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.set_width(label_w);
+                        ui.label(RichText::new(attr_title(&a.name)).color(TEXT()).size(16.0));
+                        ui.label(RichText::new(power_limit_hint(&a.name)).color(DIM()).size(12.5));
+                    });
+                    let slider_w = (ui.available_width() - value_w - 16.0).max(120.0);
+                    ui.spacing_mut().slider_width = slider_w;
+                    let r = ui.add(egui::Slider::new(&mut v, lo..=hi).show_value(false));
+                    // The stock mark under the rail.
+                    if let Some(d) = a.default.filter(|_| hi > lo) {
+                        let rect = r.rect;
+                        let range = rect.x_range().shrink(rect.height() / 2.5);
+                        let t = (d - lo) as f32 / (hi - lo) as f32;
+                        let x = range.min + (range.max - range.min) * t.clamp(0.0, 1.0);
+                        let y = rect.center().y + 7.0;
+                        ui.painter().line_segment(
+                            [egui::pos2(x, y), egui::pos2(x, y + 7.0)],
+                            egui::Stroke::new(2.0, DIM()),
+                        );
+                    }
+                    if r.changed() {
+                        self.attr_edit.insert(a.name.clone(), v);
+                    }
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        self.attr_edit.remove(&a.name);
+                        if v != cur {
+                            send.push((a.name.clone(), v));
+                        }
+                    }
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(format!("{v} {unit}")).color(TEXT()).size(18.0).strong());
+                        let note = match a.default {
+                            Some(d) if d == v => "stock".to_string(),
+                            Some(d) => format!("stock {d} {unit}"),
+                            None => String::new(),
+                        };
+                        ui.label(RichText::new(note).color(DIM()).size(12.5));
+                    });
+                });
+                ui.add_space(8.0);
+            }
+            ui.horizontal(|ui| {
+                ui.add_enabled_ui(tuned || differs, |ui| {
+                    if ui.button(format!("Back to stock for {mode}")).clicked() {
+                        to_stock = true;
+                    }
+                });
+                ui.label(
+                    RichText::new("Changing a limit gives this mode its own; the other modes keep theirs.")
+                        .color(DIM())
+                        .size(12.5),
+                );
+            });
+        });
+
+        if to_stock {
+            let back: Vec<(String, i64)> = limits.iter().filter_map(|a| Some((a.name.clone(), a.default?))).collect();
+            self.attr_edit.clear();
+            self.limits_sent = Some((Instant::now(), back.iter().cloned().collect()));
+            self.run(ctl::power_limits(&profile, &back, tuned, fan_curve_on, true));
+        } else if !send.is_empty() {
+            let mut map = self.limits_sent.take().map(|(_, m)| m).unwrap_or_default();
+            map.extend(send.iter().cloned());
+            self.limits_sent = Some((Instant::now(), map));
+            self.run(ctl::power_limits(&profile, &send, tuned, fan_curve_on, false));
+        }
     }
 
     /// Fans: pick Silent, Balanced or Turbo (this switches the laptop's mode), see that

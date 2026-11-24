@@ -784,6 +784,51 @@ pub fn set_attr(name: &str, path: &Path, value: i64) -> Action {
     }
 }
 
+/// Give the active mode its own power limits (for the current power source), or put it back
+/// to stock (`stock`: `values` are then the stock values).
+///
+/// asusd only keeps limits for a mode with "profile tuning" on, and only lets tuning be
+/// switched on while that mode has a custom fan curve. So when tuning is off: turn the fan
+/// curve on for a moment (the curve stored for the mode, normally the stock one), switch
+/// tuning on, and turn the fan curve back off; the limits stay with the mode from then on.
+/// Back to stock: the stock values go in, then tuning goes off.
+pub fn power_limits(profile: &str, values: &[(String, i64)], tuning_on: bool, fan_curve_on: bool, stock: bool) -> Action {
+    let p = asusctl_profile(profile);
+    let curve = |on: &str| {
+        vec![
+            argv(&["asusctl", "fan-curve", "--mod-profile", p, "--enable-fan-curves", on]),
+            argv(&["asusctl", "fan-curve", "-m", p, "-e", on]),
+        ]
+    };
+    let mut groups = Vec::new();
+    if !tuning_on {
+        if !fan_curve_on {
+            groups.push(curve("true"));
+        }
+        groups.push(vec![argv(&["asusctl", "profile", "tuning", "true"])]);
+        if !fan_curve_on {
+            groups.push(curve("false"));
+        }
+    }
+    for (name, v) in values {
+        groups.push(vec![argv(&["asusctl", "armoury", "set", name, &v.to_string()])]);
+    }
+    if stock {
+        groups.push(vec![argv(&["asusctl", "profile", "tuning", "false"])]);
+    }
+    let mode = crate::app::profile_title(profile);
+    let label = if stock {
+        format!("{POWER_LIMITS_LABEL} {mode} back to stock")
+    } else {
+        let parts: Vec<String> = values.iter().map(|(n, v)| format!("{} {v} W", crate::app::attr_title(n))).collect();
+        format!("{POWER_LIMITS_LABEL} {mode} → {}", parts.join(", "))
+    };
+    Action { label, groups, ..Default::default() }
+}
+
+/// Every power-limit action's label starts with this.
+pub const POWER_LIMITS_LABEL: &str = "Power limits for";
+
 /// Every graphics-mode action's label starts with this.
 pub const GFX_LABEL: &str = "Graphics mode →";
 

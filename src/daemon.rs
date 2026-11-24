@@ -236,11 +236,15 @@ pub fn run_tray() {
         }
     };
     let mut snap = Snapshot::default();
+    let mut limits = crate::power::LimitsWatcher::default();
     loop {
         match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Event::Snap(s)) => {
                 snap = refresh(*s);
                 follow_charger(snap.on_ac, &tools);
+                if let Some(a) = limits.check(&snap, &tools) {
+                    ctl::execute(a, tools.clone(), msg_tx.clone(), || {});
+                }
             }
             Ok(Event::Tools(t)) => {
                 tools = t;

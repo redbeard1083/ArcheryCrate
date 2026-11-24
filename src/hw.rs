@@ -31,6 +31,8 @@ pub struct Attr {
     pub current: Option<i64>,
     pub min: Option<i64>,
     pub max: Option<i64>,
+    /// The firmware's stock value (asus-armoury's default_value).
+    pub default: Option<i64>,
     pub possible: Vec<i64>,
     pub display: String,
 }
@@ -94,11 +96,60 @@ pub struct Snapshot {
     pub gpu_curve_enabled: Option<bool>,
     /// A dot-matrix lid display (USB 0b05:193b / 0b05:19b3) is present.
     pub has_lid_matrix: bool,
+    /// asusd's own power limits for each mode, plugged in and on battery.
+    pub tunings: Vec<Tuning>,
+}
+
+/// One mode's power limits as asusd keeps them (`ac_profile_tunings` / `dc_profile_tunings`
+/// in /etc/asusd/asusd.ron). When `enabled`, asusd puts `values` in place whenever that mode
+/// starts; otherwise the mode uses the laptop's stock limits.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Tuning {
+    pub on_ac: bool,
+    /// asusctl's name: Quiet, Balanced or Performance.
+    pub profile: String,
+    pub enabled: bool,
+    /// (attribute name such as ppt_apu_sppt, watts)
+    pub values: Vec<(String, i64)>,
+}
+
+/// Power-limit attributes (the sliders on the Performance page).
+pub fn is_power_limit(name: &str) -> bool {
+    name.starts_with("ppt_") || name.starts_with("nv_")
 }
 
 impl Snapshot {
     pub fn attr(&self, name: &str) -> Option<&Attr> {
         self.attrs.iter().find(|a| a.name == name)
+    }
+
+    pub fn power_limits(&self) -> Vec<&Attr> {
+        self.attrs.iter().filter(|a| is_power_limit(&a.name)).collect()
+    }
+
+    /// The active mode's power limits for the current power source, as asusd keeps them.
+    pub fn tuning_now(&self) -> Option<&Tuning> {
+        let profile = crate::ctl::asusctl_profile(self.profile.as_deref()?);
+        let on_ac = self.on_ac.unwrap_or(true);
+        self.tunings.iter().find(|t| t.profile == profile && t.on_ac == on_ac)
+    }
+
+    /// The active mode has no limits of its own, yet the limits in place aren't stock: they
+    /// were carried over from another mode (asusd leaves them when a mode without limits of
+    /// its own starts). Those are the stock values to put back.
+    pub fn leftover_limits(&self) -> Option<Vec<(String, i64)>> {
+        if self.profile.is_none() || self.tuning_now().is_some_and(|t| t.enabled) {
+            return None;
+        }
+        let back: Vec<(String, i64)> = self
+            .power_limits()
+            .into_iter()
+            .filter_map(|a| match (a.current, a.default) {
+                (Some(c), Some(d)) if c != d => Some((a.name.clone(), d)),
+                _ => None,
+            })
+            .collect();
+        (!back.is_empty()).then_some(back)
     }
 
     /// The graphics mode, from the MUX, Cardwire and the firmware's dGPU switch.
@@ -358,6 +409,7 @@ impl Sampler {
 
         // Firmware attributes
         s.attrs = read_attrs();
+        s.tunings = read_tunings();
         s.pending_reboot = read_num::<u8>(format!("{ARMOURY}/pending_reboot")) == Some(1);
         if self.disks_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(15)) {
             self.disks_cache = read_disks();
@@ -553,6 +605,62 @@ fn read_curve(hwmon: &Path, pwm: u8) -> Option<Curve> {
     Some(c)
 }
 
+fn read_tunings() -> Vec<Tuning> {
+    read("/etc/asusd/asusd.ron").map(|t| parse_tunings(&t)).unwrap_or_default()
+}
+
+/// Reads the `ac_profile_tunings` / `dc_profile_tunings` blocks of asusd.ron.
+pub fn parse_tunings(text: &str) -> Vec<Tuning> {
+    // PptApuSppt → ppt_apu_sppt, PptPl1Spl → ppt_pl1_spl
+    let snake = |s: &str| {
+        let mut o = String::new();
+        for (i, ch) in s.chars().enumerate() {
+            if ch.is_ascii_uppercase() && i > 0 {
+                o.push('_');
+            }
+            o.push(ch.to_ascii_lowercase());
+        }
+        o
+    };
+    let mut out: Vec<Tuning> = Vec::new();
+    let mut side: Option<bool> = None;
+    for line in text.lines() {
+        let l = line.trim();
+        let indent = line.len() - line.trim_start().len();
+        // Top-level fields sit at the shallowest indent inside "(": a new one starts or ends a block.
+        if indent <= 4 && !l.is_empty() && l != ")" {
+            side = if l.starts_with("ac_profile_tunings") {
+                Some(true)
+            } else if l.starts_with("dc_profile_tunings") {
+                Some(false)
+            } else {
+                None
+            };
+            continue;
+        }
+        let Some(on_ac) = side else { continue };
+        let Some((key, val)) = l.split_once(':') else { continue };
+        let (key, val) = (key.trim(), val.trim().trim_end_matches(','));
+        match key {
+            "Quiet" | "Balanced" | "Performance" | "LowPower" | "Custom" if val == "(" => {
+                out.push(Tuning { on_ac, profile: key.into(), ..Default::default() });
+            }
+            "enabled" => {
+                if let Some(t) = out.last_mut() {
+                    t.enabled = val == "true";
+                }
+            }
+            k if k.starts_with("Ppt") || k.starts_with("Nv") => {
+                if let (Some(t), Ok(v)) = (out.last_mut(), val.parse()) {
+                    t.values.push((snake(k), v));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn read_attrs() -> Vec<Attr> {
     let mut out = Vec::new();
     if let Ok(dir) = fs::read_dir(ARMOURY) {
@@ -570,6 +678,7 @@ fn read_attrs() -> Vec<Attr> {
                 current: read_num(&cur),
                 min: read_num(p.join("min_value")),
                 max: read_num(p.join("max_value")),
+                default: read_num(p.join("default_value")),
                 possible,
                 display: read(p.join("display_name")).unwrap_or_default(),
                 path: cur,
@@ -597,4 +706,31 @@ fn read_attrs() -> Vec<Attr> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_asusd_power_limits() {
+        let text = "(\n    charge_control_end_threshold: 80,\n    ac_profile_tunings: {\n        Balanced: (\n            enabled: true,\n            group: {\n                PptApuSppt: 60,\n                PptPl1Spl: 45,\n            },\n        ),\n        Quiet: (\n            enabled: false,\n            group: {},\n        ),\n    },\n    dc_profile_tunings: {\n        Quiet: (\n            enabled: true,\n            group: {\n                PptPlatformSppt: 40,\n            },\n        ),\n    },\n    armoury_settings: {\n        PptApuSppt: 99,\n        BootSound: 0,\n    },\n)";
+        let t = parse_tunings(text);
+        assert_eq!(t.len(), 3);
+        assert_eq!(
+            t[0],
+            Tuning {
+                on_ac: true,
+                profile: "Balanced".into(),
+                enabled: true,
+                values: vec![("ppt_apu_sppt".into(), 60), ("ppt_pl1_spl".into(), 45)],
+            }
+        );
+        assert!(!t[1].enabled && t[1].values.is_empty());
+        assert_eq!((t[2].on_ac, t[2].enabled, t[2].values.clone()), (false, true, vec![("ppt_platform_sppt".into(), 40)]));
+        // The real file on this laptop, when there is one, must read without surprises.
+        if let Some(real) = read("/etc/asusd/asusd.ron") {
+            assert!(parse_tunings(&real).iter().all(|t| t.values.iter().all(|(n, _)| is_power_limit(n))));
+        }
+    }
 }
