@@ -17,27 +17,37 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-/// Draw the window on the integrated GPU.
+/// Draw the window on the integrated GPU (the discrete one in Ultimate mode).
 ///
 /// egui prefers the "high performance" GPU by default, which on a hybrid laptop is the
 /// discrete one. Switching to Eco mode then pulls that GPU out from under the window and
 /// the renderer aborts; it also keeps the discrete GPU awake just to draw a control panel.
-fn integrated_gpu_only() -> eframe::egui_wgpu::WgpuConfiguration {
+fn window_gpu() -> eframe::egui_wgpu::WgpuConfiguration {
     use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
     use eframe::wgpu::{Adapter, DeviceType, PowerPreference};
 
+    // In Ultimate mode the discrete GPU drives the screen and the integrated one has nothing
+    // to show: drawing there would keep it busy and copy every frame across. Eco can't be
+    // chosen in Ultimate without a restart, so the window can safely use the discrete GPU then.
+    let ultimate = hw::dgpu_drives_builtin_screen();
     let mut create = WgpuSetupCreateNew::without_display_handle();
-    create.power_preference = PowerPreference::LowPower;
-    create.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[Adapter], surface| {
+    create.power_preference = if ultimate.is_some() { PowerPreference::HighPerformance } else { PowerPreference::LowPower };
+    create.native_adapter_selector = Some(std::sync::Arc::new(move |adapters: &[Adapter], surface| {
         let usable: Vec<&Adapter> = adapters
             .iter()
             .filter(|a| surface.is_none_or(|s| a.is_surface_supported(s)))
             .collect();
-        let rank = |a: &Adapter| match a.get_info().device_type {
-            DeviceType::IntegratedGpu => 0,
-            DeviceType::Other | DeviceType::VirtualGpu => 1,
-            DeviceType::Cpu => 2,
-            DeviceType::DiscreteGpu => 3,
+        let rank = |a: &Adapter| {
+            let info = a.get_info();
+            match (ultimate, info.device_type) {
+                (Some((v, d)), _) if info.vendor == v && info.device == d => 0,
+                (Some(_), DeviceType::DiscreteGpu) => 1,
+                (Some(_), _) => 4,
+                (None, DeviceType::IntegratedGpu) => 0,
+                (None, DeviceType::Other | DeviceType::VirtualGpu) => 1,
+                (None, DeviceType::Cpu) => 2,
+                (None, DeviceType::DiscreteGpu) => 3,
+            }
         };
         usable
             .into_iter()
@@ -129,7 +139,7 @@ fn main() -> eframe::Result<()> {
         viewport = viewport.with_active(false);
     }
 
-    let options = eframe::NativeOptions { viewport, wgpu_options: integrated_gpu_only(), ..Default::default() };
+    let options = eframe::NativeOptions { viewport, wgpu_options: window_gpu(), ..Default::default() };
     eframe::run_native(
         "ArcheryCrate",
         options,

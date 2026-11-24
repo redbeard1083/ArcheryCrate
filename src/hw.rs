@@ -420,6 +420,26 @@ pub fn wake_dgpu() -> Result<String, String> {
     Ok(format!("woke the discrete GPU ({node}) so it sees connected monitors"))
 }
 
+/// The PCI vendor and device id of the discrete GPU when it drives the built-in screen
+/// (Ultimate mode, after the restart), so the window can draw there and leave the
+/// integrated GPU idle. `None` in every other mode.
+pub fn dgpu_drives_builtin_screen() -> Option<(u32, u32)> {
+    let hex = |p: PathBuf| read(p).and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok());
+    for e in fs::read_dir("/sys/class/drm").ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        // Connectors are named like card1-eDP-1.
+        let Some((card, conn)) = name.split_once('-') else { continue };
+        if !conn.starts_with("eDP") || read(e.path().join("status")).as_deref() != Some("connected") {
+            continue;
+        }
+        let dev = Path::new("/sys/class/drm").join(card).join("device");
+        if is_discrete(&dev) {
+            return Some((hex(dev.join("vendor"))?, hex(dev.join("device"))?));
+        }
+    }
+    None
+}
+
 pub fn is_discrete(dev: &Path) -> bool {
     if read(dev.join("vendor")).as_deref() == Some("0x10de") {
         return true;
