@@ -15,7 +15,7 @@ use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::time::Duration;
 
 use crate::ctl::{self, Msg, Tools};
-use crate::hw::Sampler;
+use crate::hw::{Sampler, Snapshot};
 use crate::tray::{self, TrayCmd};
 
 fn runtime_dir() -> PathBuf {
@@ -125,6 +125,8 @@ fn ask_window_gfx(m: ctl::GfxMode, token: Option<String>) {
 enum Event {
     Tray(TrayCmd),
     Tools(Tools),
+    /// A fresh hardware reading from the sampler thread.
+    Snap(Box<Snapshot>),
 }
 
 /// `archerycrate --tray`: the tray icon only, no window.
@@ -186,9 +188,24 @@ pub fn run_tray() {
     }
 
     let mut tools = Tools::default();
-    let mut sampler = Sampler::default();
-    let refresh = |sampler: &mut Sampler| {
-        let s = sampler.sample();
+    // Readings come from their own thread: a slow sensor or tool (e.g. while a monitor is being
+    // plugged in and KDE reconfigures) must never stop the tray from answering clicks.
+    {
+        let tx = tx.clone();
+        std::thread::Builder::new()
+            .name("tray-sampler".into())
+            .spawn(move || {
+                let mut sampler = Sampler::default();
+                loop {
+                    if tx.send(Event::Snap(Box::new(sampler.sample()))).is_err() {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_secs(3));
+                }
+            })
+            .ok();
+    }
+    let refresh = |s: Snapshot| {
         let profile = s.profile.clone().unwrap_or_default();
         let status = format!(
             "{} · CPU {} · Battery {}",
@@ -218,11 +235,17 @@ pub fn run_tray() {
             crate::power::on_change(on_battery, tools, msg_tx.clone(), || {});
         }
     };
-    let mut snap = refresh(&mut sampler);
-    follow_charger(snap.on_ac, &tools);
+    let mut snap = Snapshot::default();
     loop {
         match rx.recv_timeout(Duration::from_secs(3)) {
-            Ok(Event::Tools(t)) => tools = t,
+            Ok(Event::Snap(s)) => {
+                snap = refresh(*s);
+                follow_charger(snap.on_ac, &tools);
+            }
+            Ok(Event::Tools(t)) => {
+                tools = t;
+                follow_charger(snap.on_ac, &tools);
+            }
             Ok(Event::Tray(TrayCmd::Show(token))) => open_window(token),
             Ok(Event::Tray(TrayCmd::Gfx(m, token))) => {
                 let now = snap.gfx_mode();
@@ -248,8 +271,6 @@ pub fn run_tray() {
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
-        snap = refresh(&mut sampler);
-        follow_charger(snap.on_ac, &tools);
     }
     // Leave cleanly: no socket for anyone to find, the tray icon taken off the panel (waited
     // for, but never longer than 2 s), then the process ends even if a helper thread lingers.

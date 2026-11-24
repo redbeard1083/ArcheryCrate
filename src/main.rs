@@ -45,7 +45,18 @@ fn integrated_gpu_only() -> eframe::egui_wgpu::WgpuConfiguration {
             .cloned()
             .ok_or_else(|| "no graphics adapter can draw to this window".to_string())
     }));
-    WgpuConfiguration { wgpu_setup: WgpuSetup::CreateNew(create), ..Default::default() }
+    WgpuConfiguration {
+        wgpu_setup: WgpuSetup::CreateNew(create),
+        // Don't wait for vsync: on Wayland that means waiting for the compositor's "draw the
+        // next frame" signal, which can stop coming while monitors are added or removed (a
+        // monitor plugged in with the charger froze the window). The window only redraws
+        // when something changes, so this doesn't make it busy.
+        surface: eframe::egui_wgpu::SurfaceConfig {
+            present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
+            desired_maximum_frame_latency: Some(2),
+        },
+        ..Default::default()
+    }
 }
 
 fn main() -> eframe::Result<()> {

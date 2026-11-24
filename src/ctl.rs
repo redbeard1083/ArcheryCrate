@@ -81,10 +81,7 @@ fn host_command(args: &[String]) -> Command {
 }
 
 fn run(args: &[String]) -> Result<String, String> {
-    let out = host_command(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("could not start {}: {e}", args[0]))?;
+    let out = output_with_timeout(args)?;
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -106,6 +103,59 @@ fn run(args: &[String]) -> Result<String, String> {
     } else {
         Err(if text.is_empty() { format!("exit status {}", out.status) } else { text })
     }
+}
+
+/// How long a command may take. Password prompts and terminals wait for the person;
+/// everything else should answer within seconds. A tool that hangs (e.g. kscreen-doctor while
+/// KDE sets up a newly plugged monitor) must not hold up what comes after it.
+fn time_limit(args: &[String]) -> std::time::Duration {
+    let prog = Path::new(&args[0]).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let secs = match prog {
+        "pkexec" | "sudo" => 300,
+        "konsole" | "kgx" | "gnome-terminal" | "alacritty" | "kitty" | "xterm" => 3600,
+        _ => 20,
+    };
+    std::time::Duration::from_secs(secs)
+}
+
+/// Run a command and collect its output, but give up (and stop it) after `time_limit`.
+fn output_with_timeout(args: &[String]) -> Result<std::process::Output, String> {
+    output_within(args, time_limit(args))
+}
+
+fn output_within(args: &[String], limit: std::time::Duration) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    let mut child = host_command(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start {}: {e}", args[0]))?;
+    // Read both pipes on their own threads so a chatty program can't fill a pipe and stall.
+    let pipe = |mut r: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut v = Vec::new();
+            let _ = r.read_to_end(&mut v);
+            v
+        })
+    };
+    let out_t = child.stdout.take().map(|s| pipe(Box::new(s)));
+    let err_t = child.stderr.take().map(|s| pipe(Box::new(s)));
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if start.elapsed() >= limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{} didn't answer within {} s and was stopped", args[0], limit.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(15)),
+            Err(e) => return Err(format!("{}: {e}", args[0])),
+        }
+    };
+    let take = |t: Option<std::thread::JoinHandle<Vec<u8>>>| t.and_then(|h| h.join().ok()).unwrap_or_default();
+    Ok(std::process::Output { status, stdout: take(out_t), stderr: take(err_t) })
 }
 
 /// Pull a version number such as "6.5.0" out of a tool's output.
@@ -882,6 +932,19 @@ mod tests {
 
     /// Output of `asusctl fan-curve --mod-profile Quiet` (asusctl 6.5.0, GA402RJ).
     const QUIET: &str = "Fan curves for Quiet\n\n[\n    (\n        fan: CPU,\n        pwm: (7, 30, 30, 56, 56, 86, 86, 104),\n        temp: (60, 65, 65, 70, 70, 75, 75, 98),\n        enabled: false,\n    ),\n    (\n        fan: GPU,\n        pwm: (20, 43, 43, 73, 73, 96, 96, 114),\n        temp: (60, 65, 65, 70, 70, 75, 75, 98),\n        enabled: false,\n    ),\n]\n";
+
+    #[test]
+    fn a_hung_command_is_stopped() {
+        let t = Instant::now();
+        let r = output_within(&argv(&["sleep", "5"]), std::time::Duration::from_secs(1));
+        assert!(r.is_err(), "should give up");
+        assert!(t.elapsed() < std::time::Duration::from_secs(3), "gave up after {:?}", t.elapsed());
+        let ok = output_within(&argv(&["echo", "hi"]), std::time::Duration::from_secs(5)).expect("runs");
+        assert_eq!(String::from_utf8_lossy(&ok.stdout).trim(), "hi");
+        // Ordinary tools get 20 s; password prompts wait for the person.
+        assert_eq!(time_limit(&argv(&["kscreen-doctor", "-j"])).as_secs(), 20);
+        assert_eq!(time_limit(&argv(&["pkexec", "sh"])).as_secs(), 300);
+    }
 
     #[test]
     fn reads_asusctl_fan_curves() {

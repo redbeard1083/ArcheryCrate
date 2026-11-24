@@ -248,33 +248,18 @@ fn go_battery(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
     saved.save();
 }
 
-/// Put back what `go_battery` changed (only `only`, when given), in reverse order.
+/// Put back what `go_battery` changed (only `only`, when given).
+///
+/// Graphics come back first: on the G14 the HDMI port is wired to the discrete GPU, so an
+/// external monitor plugged in with the charger needs it — and the screen steps below go
+/// through KDE's display tools, which can be slow while KDE sets that monitor up. The state
+/// file is saved after every step, so nothing is put back twice or forgotten.
 fn go_charger(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
     let mut saved = Saved::load();
     let want = |i: Item| only.is_none_or(|o| o == i);
 
-    if want(Item::Refresh) && std::mem::take(&mut saved.refresh) {
-        match crate::display::apply(false) {
-            Ok(t) => send(note("Screen refresh → full speed", true, t)),
-            Err(e) => send(note("Screen refresh → full speed", false, e)),
-        }
-    }
-    if want(Item::Backlight) {
-        if let Some(pct) = saved.backlight.take() {
-            match crate::display::set_backlight_pct(pct) {
-                Ok(t) => send(note("Screen brightness back", true, t)),
-                Err(e) => send(note("Screen brightness back", false, e)),
-            }
-        }
-    }
-    if want(Item::Keyboard) {
-        if let Some(level) = saved.kbd.take() {
-            let mut a = ctl::set_kbd_brightness(level);
-            a.label = format!("Keyboard light back to {}", ctl::kbd_level_name(level));
-            send(ctl::run_action(a, tools));
-        }
-    }
     if want(Item::Gfx) && std::mem::take(&mut saved.gfx_standard) {
+        saved.save();
         let snap = Sampler::default().sample();
         if snap.gfx_mode() == GfxMode::Eco {
             let mut a = ctl::set_gfx(GfxMode::Standard, &snap.gfx_state());
@@ -282,8 +267,41 @@ fn go_charger(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
             send(ctl::run_action(a, tools));
         }
     }
+    if want(Item::Profile) {
+        if let Some(p) = saved.profile.take() {
+            saved.save();
+            let mut a = ctl::set_profile(&p);
+            a.label = format!("Performance back to {}", crate::app::profile_title(&p));
+            send(ctl::run_action(a, tools));
+        }
+    }
+    if want(Item::Keyboard) {
+        if let Some(level) = saved.kbd.take() {
+            saved.save();
+            let mut a = ctl::set_kbd_brightness(level);
+            a.label = format!("Keyboard light back to {}", ctl::kbd_level_name(level));
+            send(ctl::run_action(a, tools));
+        }
+    }
+    if want(Item::Backlight) {
+        if let Some(pct) = saved.backlight.take() {
+            saved.save();
+            match crate::display::set_backlight_pct(pct) {
+                Ok(t) => send(note("Screen brightness back", true, t)),
+                Err(e) => send(note("Screen brightness back", false, e)),
+            }
+        }
+    }
+    if want(Item::Refresh) && std::mem::take(&mut saved.refresh) {
+        saved.save();
+        match crate::display::apply(false) {
+            Ok(t) => send(note("Screen refresh → full speed", true, t)),
+            Err(e) => send(note("Screen refresh → full speed", false, e)),
+        }
+    }
     if want(Item::Fans) {
         if let Some(f) = saved.fans.take() {
+            saved.save();
             let snap = Sampler::default().sample();
             let active = snap.profile.as_deref() == Some(f.profile.as_str());
             let hw = snap.curve_hwmon;
@@ -294,13 +312,6 @@ fn go_charger(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
                 let off = ctl::fan_curves_off(&f.profile, active, hw.as_deref());
                 a.groups.extend(off.groups);
             }
-            send(ctl::run_action(a, tools));
-        }
-    }
-    if want(Item::Profile) {
-        if let Some(p) = saved.profile.take() {
-            let mut a = ctl::set_profile(&p);
-            a.label = format!("Performance back to {}", crate::app::profile_title(&p));
             send(ctl::run_action(a, tools));
         }
     }
