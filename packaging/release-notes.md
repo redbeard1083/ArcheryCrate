@@ -2,6 +2,21 @@ ArcheryCrate is a control center for ASUS laptops on Linux: performance modes an
 graphics modes, fan curves, battery charge limit and on-battery automation, keyboard lighting,
 and a live dashboard. Developed on a 2022 ROG Zephyrus G14 (GA402RJ) with KDE Plasma on Wayland.
 
+## What's new in 0.3
+
+- **Fix: Silent could be raised to full power.** In 0.2, leaving a mode that had its own power
+  limits could write the maximum limits into the next mode. That step is gone, and
+  "Back to stock" now hands the mode back to the laptop's own limits.
+- **Version in Settings**, with a link to new releases.
+- **Darker Neon theme** so the bright parts stand out, plus one colour scale everywhere:
+  temperatures go cyan → green → yellow → orange → red, and memory, storage and battery turn
+  amber, then red, only when they need attention.
+- **Rainbow speed** slider in Settings (Neon).
+- **Restart question as a notification.** Switching to or from Ultimate in the tray menu asks
+  with a desktop notification: restart now, restart later, or cancel.
+- **Eco on battery is skipped while a monitor is on the HDMI port**, because that monitor
+  keeps the graphics card on anyway.
+
 ## What's new in 0.2
 
 - **Power limits per mode.** Silent, Balanced and Turbo each keep their own limits (plugged in
