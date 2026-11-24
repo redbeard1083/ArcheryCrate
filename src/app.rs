@@ -390,6 +390,7 @@ impl CrateApp {
         // Calm: always (Settings), or only while on battery (Battery page).
         let on_battery = self.snap.on_ac == Some(false);
         crate::widgets::set_calm(self.settings.neon_calm || (self.settings.battery_calm && on_battery));
+        crate::widgets::set_rainbow_speed(self.settings.rainbow_speed.unwrap_or(1.0));
         // Neon's rainbow moves: keep drawing (about 30 times a second) while it does.
         if crate::widgets::rainbow_moving() {
             ctx.request_repaint_after(Duration::from_millis(33));
@@ -2179,6 +2180,30 @@ impl CrateApp {
                         }
                         ui.label("Calm it down");
                         ui.label(RichText::new("(the rainbow stops moving)").color(DIM()));
+                    });
+                    ui.add_enabled_ui(!self.settings.neon_calm, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Rainbow speed").color(DIM()));
+                            let mut sp = self.settings.rainbow_speed.unwrap_or(1.0);
+                            ui.spacing_mut().slider_width = 220.0;
+                            let r = ui.add(
+                                egui::Slider::new(&mut sp, 0.25..=3.0)
+                                    .step_by(0.25)
+                                    .custom_formatter(|v, _| format!("{v:.2}×")),
+                            );
+                            if r.changed() {
+                                self.settings.rainbow_speed = Some(sp);
+                                crate::widgets::set_rainbow_speed(sp);
+                            }
+                            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                                self.settings.save();
+                            }
+                            ui.label(RichText::new(match sp {
+                                s if s < 0.75 => "slow",
+                                s if s <= 1.25 => "normal",
+                                _ => "fast",
+                            }).color(DIM()));
+                        });
                     });
                 }
                 ui.horizontal(|ui| {

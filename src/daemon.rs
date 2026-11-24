@@ -155,13 +155,13 @@ fn confirm_gfx_restart(m: ctl::GfxMode, state: ctl::GfxState, tools: Tools, msg_
         let choice = ask_by_notification(
             title,
             &body,
-            &[("now", "Switch and restart now"), ("later", "Switch, I'll restart later")],
+            &[("now", "Switch and restart now"), ("later", "Switch, I'll restart later"), ("cancel", "Cancel")],
         );
         let restart_now = match choice.as_deref() {
             None => return ask_window_gfx(m, token),
             Some("now") => true,
             Some("later") => false,
-            Some(_) => return, // closed: nothing changes
+            Some(_) => return, // Cancel, or closed: nothing changes
         };
         let o = ctl::run_action(ctl::set_gfx(m, &state), &tools);
         let ok = o.ok;

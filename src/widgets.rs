@@ -12,8 +12,8 @@ use crate::hw::Curve;
 // read from is switched by `set_palette`.
 // ---------------------------------------------------------------------------
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 
 /// The palettes.
@@ -28,6 +28,8 @@ pub enum Palette {
 static PALETTE: AtomicU8 = AtomicU8::new(Palette::Dark as u8);
 /// "Calm it down" in Neon: the rainbow stops moving (and the window stops redrawing for it).
 static CALM: AtomicBool = AtomicBool::new(false);
+/// The rainbow's speed (an f32's bits; 1.0 = one full cycle about every 6 s).
+static SPEED: AtomicU32 = AtomicU32::new(0x3f80_0000);
 
 pub fn palette() -> Palette {
     match PALETTE.load(Ordering::Relaxed) {
@@ -169,6 +171,11 @@ pub fn set_palette(p: Palette) -> bool {
     PALETTE.swap(p as u8, Ordering::Relaxed) != p as u8
 }
 
+/// How fast the rainbow moves: 1.0 is normal, 0.25 slow, 3.0 fast.
+pub fn set_rainbow_speed(speed: f32) {
+    SPEED.store(speed.clamp(0.1, 5.0).to_bits(), Ordering::Relaxed);
+}
+
 pub fn set_calm(calm: bool) {
     CALM.store(calm, Ordering::Relaxed);
 }
@@ -180,12 +187,19 @@ pub fn rainbow_moving() -> bool {
 
 /// Where the moving rainbow is, in turns (0..1 is one full cycle, about every 6 s).
 pub fn rainbow_phase() -> f32 {
-    static START: OnceLock<Instant> = OnceLock::new();
+    // Advanced by the time since the last call at the current speed, so changing the speed
+    // doesn't make the colours jump.
+    static STATE: Mutex<Option<(Instant, f32)>> = Mutex::new(None);
     if !rainbow_moving() {
         return 0.0;
     }
-    let t = START.get_or_init(Instant::now).elapsed().as_secs_f32();
-    (t / 6.0).fract()
+    let speed = f32::from_bits(SPEED.load(Ordering::Relaxed));
+    let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    let (last, phase) = g.unwrap_or((now, 0.0));
+    let phase = (phase + now.duration_since(last).as_secs_f32() * speed / 6.0).fract();
+    *g = Some((now, phase));
+    phase
 }
 
 /// A rainbow colour `offset` turns along from the moving phase.

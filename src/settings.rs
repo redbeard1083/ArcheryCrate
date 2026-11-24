@@ -41,6 +41,9 @@ pub struct Settings {
     /// Neon without the moving rainbow.
     #[serde(default)]
     pub neon_calm: bool,
+    /// How fast Neon's rainbow moves, as a multiple of the normal speed (None = normal).
+    #[serde(default)]
+    pub rainbow_speed: Option<f32>,
     /// Home as a 3×3 grid that fits the window (instead of the detailed, scrolling page).
     #[serde(default)]
     pub home_grid: bool,
