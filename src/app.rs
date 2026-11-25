@@ -216,6 +216,10 @@ pub struct CrateApp {
     /// Restart as soon as the confirmed graphics change has been written.
     restart_after_gfx: bool,
     restart_confirm: bool,
+    /// "Shut down now?" (from the stuck-fans warning).
+    shutdown_confirm: bool,
+    fans_stuck: crate::hw::StuckFans,
+    fans_stuck_now: bool,
 }
 
 impl CrateApp {
@@ -355,6 +359,9 @@ impl CrateApp {
             gfx_confirm: None,
             restart_after_gfx: false,
             restart_confirm: false,
+            shutdown_confirm: false,
+            fans_stuck: Default::default(),
+            fans_stuck_now: false,
         };
         if let Some(p) = page {
             if let Some(pg) = Page::ALL.iter().find(|x| x.title().eq_ignore_ascii_case(&p)) {
@@ -569,6 +576,7 @@ impl CrateApp {
                     self.refresh_panel_info(Duration::from_millis(2500));
                 }
             }
+            self.fans_stuck_now = self.fans_stuck.update(&self.snap);
             // Extra readings right after a change shouldn't squeeze the history graphs.
             if self.last_sample.elapsed() >= Duration::from_millis(900) {
                 self.last_sample = Instant::now();
@@ -721,6 +729,23 @@ impl CrateApp {
                             }
                         });
                     });
+                });
+            ui.add_space(8.0);
+        }
+        if self.fans_stuck_now && self.page != Page::Activity {
+            egui::Frame::new()
+                .fill(lerp_color(CARD(), RED(), 0.10))
+                .stroke(egui::Stroke::new(1.0, lerp_color(LINE(), RED(), 0.6)))
+                .corner_radius(8)
+                .inner_margin(10)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("⚠  Fans stuck at full speed").color(TEXT()).strong());
+                    ui.label(RichText::new(crate::hw::STUCK_FANS_TEXT).color(DIM()));
+                    ui.add_space(4.0);
+                    if accent_button(ui, "Shut down now…").clicked() {
+                        self.shutdown_confirm = true;
+                    }
                 });
             ui.add_space(8.0);
         }
@@ -2051,6 +2076,35 @@ impl CrateApp {
             if go {
                 self.restart_confirm = false;
                 self.run(ctl::restart_laptop());
+            }
+        }
+        if self.shutdown_confirm {
+            let mut go = false;
+            let mut close = false;
+            let resp = egui::Modal::new(egui::Id::unique("shutdown-confirm")).show(ctx, |ui| {
+                ui.set_width(440.0);
+                ui.label(RichText::new("Shut the laptop down now?").size(20.0).strong().color(TEXT()));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Wait about 10 seconds after it turns off, then press the power button.").color(DIM()),
+                );
+                ui.label(RichText::new("Save your work in other apps first.").color(AMBER()));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if accent_button(ui, "Shut down now").clicked() {
+                        go = true;
+                    }
+                    if ui.button("Not now").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            if close || resp.should_close() {
+                self.shutdown_confirm = false;
+            }
+            if go {
+                self.shutdown_confirm = false;
+                self.run(ctl::shut_down_laptop());
             }
         }
     }

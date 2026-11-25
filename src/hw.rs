@@ -100,6 +100,39 @@ pub struct Snapshot {
     pub tunings: Vec<Tuning>,
 }
 
+/// Notices the fans held at (nearly) full speed while nothing is warm, for a minute and a
+/// half. Seen on the G14 after leaving Ultimate: the laptop's fan controller keeps a stale
+/// state through a restart, and no mode, fan curve or sleep releases it.
+#[derive(Default)]
+pub struct StuckFans {
+    since: Option<std::time::Instant>,
+}
+
+impl StuckFans {
+    pub const FAST_RPM: u32 = 5000;
+
+    /// Feed every new reading; true while the fans have been stuck long enough to say so.
+    pub fn update(&mut self, s: &Snapshot) -> bool {
+        let fast = !s.fans.is_empty() && s.fans.iter().all(|(_, rpm)| *rpm >= Self::FAST_RPM);
+        let cool = s.cpu_temp_c.is_some_and(|t| t <= 72.0)
+            && s.gpus.iter().all(|g| !g.awake || g.temp_c.is_none_or(|t| t <= 66.0));
+        if !(fast && cool) {
+            self.since = None;
+            return false;
+        }
+        let since = *self.since.get_or_insert_with(std::time::Instant::now);
+        // ARCHERYCRATE_STUCK_SECS shortens the wait for checks and screenshots.
+        let wait = std::env::var("ARCHERYCRATE_STUCK_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+        since.elapsed() >= std::time::Duration::from_secs(wait)
+    }
+}
+
+/// What to tell the person when the fans are stuck (the window's banner and the tray's notification).
+pub const STUCK_FANS_TEXT: &str = "The fans are running at full speed although the laptop is cool. This can happen \
+after switching graphics out of Ultimate: the laptop's fan controller keeps an old state through a restart, and \
+changing modes doesn't release it. A full shut down should clear it: shut down (not restart), wait about 10 seconds, \
+then turn the laptop back on.";
+
 /// One mode's power limits as asusd keeps them (`ac_profile_tunings` / `dc_profile_tunings`
 /// in /etc/asusd/asusd.ron). When `enabled`, asusd puts `values` in place whenever that mode
 /// starts; otherwise the mode uses the laptop's stock limits.

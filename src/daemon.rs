@@ -290,11 +290,18 @@ pub fn run_tray() {
         }
     };
     let mut snap = Snapshot::default();
+    // Say once (per tray session) when the fans are stuck at full speed; the window shows it too.
+    let mut stuck = crate::hw::StuckFans::default();
+    let mut stuck_told = false;
     loop {
         match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Event::Snap(s)) => {
                 snap = refresh(*s);
                 follow_charger(snap.on_ac, &tools);
+                if stuck.update(&snap) && !stuck_told {
+                    stuck_told = true;
+                    std::thread::spawn(|| notify("Fans stuck at full speed", crate::hw::STUCK_FANS_TEXT));
+                }
             }
             Ok(Event::Tools(t)) => {
                 tools = t;
