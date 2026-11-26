@@ -527,7 +527,10 @@ impl CrateApp {
                     if o.label.contains("asusctl") || o.label.contains("Cardwire") {
                         self.recheck_tools();
                     }
-                    if o.ok && o.needs_reboot {
+                    if o.ok && o.label.starts_with(ctl::GFX_LABEL) {
+                        // Taking a waiting switch back clears it again.
+                        self.reboot_pending = o.needs_reboot;
+                    } else if o.ok && o.needs_reboot {
                         self.reboot_pending = true;
                     }
                     let restart_now = o.label.starts_with(ctl::GFX_LABEL) && std::mem::take(&mut self.restart_after_gfx);
@@ -710,7 +713,7 @@ impl CrateApp {
     }
 
     fn page_ui(&mut self, ui: &mut Ui) {
-        if self.reboot_pending || self.snap.pending_reboot {
+        if self.reboot_pending || self.snap.pending_reboot || self.snap.gfx_pending.is_some() {
             egui::Frame::new()
                 .fill(lerp_color(CARD(), AMBER(), 0.15))
                 .stroke(egui::Stroke::new(1.0, AMBER()))
@@ -724,7 +727,7 @@ impl CrateApp {
                             RichText::new("⟳  A graphics change is waiting for a restart of the laptop.").color(TEXT()),
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if accent_button(ui, "Restart now").clicked() {
+                            if accent_button(ui, "Restart Now").clicked() {
                                 self.restart_confirm = true;
                             }
                         });
@@ -2005,10 +2008,14 @@ impl CrateApp {
     /// Pick a graphics mode: right away, or through the restart question when it needs one.
     fn pick_gfx(&mut self, m: GfxMode) {
         let mux_now = self.snap.attr("gpu_mux_mode").and_then(|a| a.current);
-        if m == self.gfx_mode() {
+        let now = self.gfx_mode();
+        if m == self.snap.gfx_pending.unwrap_or(now) {
             return;
         }
-        if m == GfxMode::Ultimate || mux_now == Some(0) {
+        if m == now {
+            // Back to the running mode: takes back the switch waiting for the restart.
+            self.switch_gfx(m);
+        } else if m == GfxMode::Ultimate || mux_now == Some(0) {
             self.page = Page::Graphics;
             self.gfx_confirm = Some(m);
         } else {
@@ -2031,10 +2038,10 @@ impl CrateApp {
                 ui.label(RichText::new("Save your work in other apps before restarting.").color(AMBER()));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if accent_button(ui, "Switch and restart now").clicked() {
+                    if accent_button(ui, "Restart Now").clicked() {
                         choice = Some(true);
                     }
-                    if ui.button("Switch, I'll restart later").clicked() {
+                    if ui.button("Restart Later").clicked() {
                         choice = Some(false);
                     }
                     if ui.button("Cancel").clicked() {
@@ -2062,7 +2069,7 @@ impl CrateApp {
                 ui.label(RichText::new("Save your work in other apps first.").color(AMBER()));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if accent_button(ui, "Restart now").clicked() {
+                    if accent_button(ui, "Restart Now").clicked() {
                         go = true;
                     }
                     if ui.button("Not now").clicked() {
@@ -2112,6 +2119,9 @@ impl CrateApp {
     fn graphics(&mut self, ui: &mut Ui) {
         page_title(ui, "Graphics", "Choose which graphics chips are used.");
         let cur = self.gfx_mode();
+        // With a switch waiting for the restart, that one is the chosen tile.
+        let pending = self.snap.gfx_pending;
+        let chosen = pending.unwrap_or(cur);
         let w = (ui.available_width() - 24.0) / 3.0;
         let mut pick = None;
         ui.horizontal(|ui| {
@@ -2121,8 +2131,15 @@ impl CrateApp {
                 (GfxMode::Standard, "⚡", "The discrete GPU wakes up only when a game or app needs it."),
                 (GfxMode::Ultimate, "🎮", "The screen is wired straight to the discrete GPU. Needs a restart."),
             ] {
-                if mode_tile(ui, w, icon, m.title(), desc, cur == m, if m == GfxMode::Ultimate { ACCENT() } else if m == GfxMode::Eco { GREEN() } else { CYAN() }).clicked()
-                    && cur != m
+                let desc = if pending == Some(m) {
+                    "Chosen: starts after the restart."
+                } else if pending.is_some() && m == cur {
+                    "In use until the restart. Pick it to stay here."
+                } else {
+                    desc
+                };
+                if mode_tile(ui, w, icon, m.title(), desc, chosen == m, if m == GfxMode::Ultimate { ACCENT() } else if m == GfxMode::Eco { GREEN() } else { CYAN() }).clicked()
+                    && chosen != m
                 {
                     pick = Some(m);
                 }

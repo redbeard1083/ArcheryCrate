@@ -23,6 +23,8 @@ pub struct Action {
     /// After success, wake the discrete GPU so it detects connected monitors (see
     /// `hw::wake_dgpu`): set when graphics come back to Standard.
     pub wake_dgpu: bool,
+    /// Graphics switches only: after success, what waits for the restart (Some(None): nothing).
+    pub gfx_pending: Option<Option<GfxMode>>,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -335,6 +337,9 @@ pub fn run_action(action: Action, tools: &Tools) -> Outcome {
                     }
                 }
             }
+        }
+        if let (true, Some(p)) = (ok, action.gfx_pending) {
+            write_pending_gfx(p);
         }
         if ok && action.wake_dgpu {
             // Give Cardwire a moment to finish unblocking it, then wake it.
@@ -900,6 +905,32 @@ pub struct GfxState {
     pub mux_now: Option<i64>,
     /// Cardwire's daemon runs: Eco/Standard block and unblock the discrete GPU in software.
     pub cardwire: bool,
+    /// A mode already chosen for after the next restart.
+    pub pending: Option<GfxMode>,
+}
+
+/// The graphics mode waiting for the restart, shared by the window and the tray. It lives in
+/// the runtime folder, which is emptied when the laptop restarts.
+fn pending_gfx_file() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("archerycrate-gfx-pending")
+}
+
+pub fn read_pending_gfx() -> Option<GfxMode> {
+    GfxMode::from_key(std::fs::read_to_string(pending_gfx_file()).ok()?.trim())
+}
+
+fn write_pending_gfx(m: Option<GfxMode>) {
+    match m {
+        Some(m) => {
+            let _ = std::fs::write(pending_gfx_file(), m.key());
+        }
+        None => {
+            let _ = std::fs::remove_file(pending_gfx_file());
+        }
+    }
 }
 
 fn cardwire(mode: &str) -> Vec<String> {
@@ -940,7 +971,8 @@ pub fn set_gfx(mode: GfxMode, st: &GfxState) -> Action {
         GfxMode::Standard => {
             revive(&mut sysfs);
             if let Some(m) = &st.mux {
-                if mux_now == Some(0) {
+                // Also when Ultimate is waiting for the restart: this takes that back.
+                if mux_now == Some(0) || st.pending == Some(GfxMode::Ultimate) {
                     sysfs.push((m.clone(), "1".into()));
                 }
             }
@@ -963,7 +995,11 @@ pub fn set_gfx(mode: GfxMode, st: &GfxState) -> Action {
             }
         }
     }
-    let reboot = mode == GfxMode::Ultimate || mux_now == Some(0);
+    // A restart is needed when the MUX ends up different from how it is now (choosing the
+    // running mode again only takes back a switch that was waiting for the restart).
+    let reboot = (mode == GfxMode::Ultimate) != (mux_now == Some(0));
+    // What runs after the restart: leaving Ultimate for Eco lands in Standard first.
+    let after_restart = if mode == GfxMode::Eco && mux_now == Some(0) { GfxMode::Standard } else { mode };
     // The same switches through asusctl (no password), in the same order; the direct
     // firmware write above is the fallback. A PCI rescan has no asusctl form, so that
     // case goes straight to the direct write.
@@ -983,6 +1019,7 @@ pub fn set_gfx(mode: GfxMode, st: &GfxState) -> Action {
         // Back to Standard right away (not via a restart): wake the discrete GPU so a monitor
         // on its HDMI port is found without anyone having to touch the GPU first.
         wake_dgpu: mode == GfxMode::Standard && !reboot,
+        gfx_pending: Some(reboot.then_some(after_restart)),
     }
 }
 
@@ -1038,7 +1075,31 @@ mod tests {
             mux: Some(format!("{a}/gpu_mux_mode/current_value").into()),
             mux_now: Some(mux_now),
             cardwire,
+            pending: None,
         }
+    }
+
+    #[test]
+    fn graphics_switch_waiting_for_restart() {
+        // Standard → Ultimate waits for the restart.
+        let u = set_gfx(GfxMode::Ultimate, &st(0, 1, true));
+        assert_eq!(u.gfx_pending, Some(Some(GfxMode::Ultimate)));
+        // Ultimate → Eco hands the screen back: Standard after the restart.
+        let e = set_gfx(GfxMode::Eco, &st(0, 0, true));
+        assert_eq!(e.gfx_pending, Some(Some(GfxMode::Standard)));
+        // Ultimate waiting, then Standard again: takes it back, no restart.
+        let mut s = st(0, 1, true);
+        s.pending = Some(GfxMode::Ultimate);
+        let back = set_gfx(GfxMode::Standard, &s);
+        assert!(!back.needs_reboot);
+        assert_eq!(back.gfx_pending, Some(None));
+        assert_eq!(cmds(&back), ["asusctl armoury set gpu_mux_mode 1", "cardwire set hybrid"]);
+        // In Ultimate with Standard waiting, Ultimate again: takes it back, no restart.
+        let mut s = st(0, 0, true);
+        s.pending = Some(GfxMode::Standard);
+        let stay = set_gfx(GfxMode::Ultimate, &s);
+        assert!(!stay.needs_reboot);
+        assert_eq!(stay.gfx_pending, Some(None));
     }
     fn cmds(a: &Action) -> Vec<String> {
         a.groups.iter().map(|g| g[0].join(" ")).chain(a.post.iter().map(|c| c.join(" "))).collect()

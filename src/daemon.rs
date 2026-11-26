@@ -155,7 +155,7 @@ fn confirm_gfx_restart(m: ctl::GfxMode, state: ctl::GfxState, tools: Tools, msg_
         let choice = ask_by_notification(
             title,
             &body,
-            &[("now", "Switch and restart now"), ("later", "Switch, I'll restart later"), ("cancel", "Cancel")],
+            &[("now", "Restart Now"), ("later", "Restart Later"), ("cancel", "Cancel")],
         );
         let restart_now = match choice.as_deref() {
             None => return ask_window_gfx(m, token),
@@ -274,6 +274,7 @@ pub fn run_tray() {
             tr.choices = s.profile_choices.clone();
             tr.status = status;
             tr.gfx = gfx;
+            tr.gfx_pending = s.gfx_pending;
         });
         s
     };
@@ -309,10 +310,18 @@ pub fn run_tray() {
             }
             Ok(Event::Tray(TrayCmd::Show(token))) => open_window(token),
             Ok(Event::Tray(TrayCmd::Gfx(m, token))) => {
+                // The panel ticked the clicked choice itself; show what's really chosen until
+                // the switch (or the answer to the restart question) changes it.
+                handle.update(|tr| tr.gfx_blank = true);
+                handle.update(|tr| tr.gfx_blank = false);
                 let now = snap.gfx_mode();
                 let mux_now = snap.attr("gpu_mux_mode").and_then(|a| a.current);
-                if m == now {
-                    // already there
+                let chosen = snap.gfx_pending.unwrap_or(now);
+                if m == chosen {
+                    // already chosen
+                } else if m == now {
+                    // Back to the running mode: takes back the switch waiting for the restart.
+                    ctl::execute(ctl::set_gfx(m, &snap.gfx_state()), tools.clone(), msg_tx.clone(), || {});
                 } else if m == ctl::GfxMode::Ultimate || mux_now == Some(0) {
                     // Needs a restart: ask first ("restart now / later") with a notification.
                     confirm_gfx_restart(m, snap.gfx_state(), tools.clone(), msg_tx.clone(), token);

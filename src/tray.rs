@@ -23,6 +23,11 @@ pub struct Tray {
     pub status: String,
     /// The graphics mode now, or None when this laptop has no graphics switches.
     pub gfx: Option<crate::ctl::GfxMode>,
+    /// The graphics mode chosen for after the next restart.
+    pub gfx_pending: Option<crate::ctl::GfxMode>,
+    /// Briefly true to make the panel redraw the graphics choices: it ticks a clicked choice
+    /// by itself, which must not stay ticked when nothing changed (or not yet).
+    pub gfx_blank: bool,
 }
 
 /// A greyed-out line used as a heading inside the menu.
@@ -142,17 +147,31 @@ impl ksni::Tray for Tray {
             use crate::ctl::GfxMode;
             items.push(heading("Graphics"));
             let modes = GfxMode::ALL;
+            let pending = self.gfx_pending.filter(|p| *p != now);
+            // Ticked: what's chosen, i.e. the mode waiting for the restart when there is one.
+            let chosen = pending.unwrap_or(now);
             let opts = modes
                 .iter()
                 .map(|m| {
-                    let restart = *m == GfxMode::Ultimate || (now == GfxMode::Ultimate && *m != now);
-                    let label = if restart { format!("{} (needs a restart)", m.title()) } else { m.title().to_string() };
+                    let label = if pending == Some(*m) {
+                        format!("{} (after the restart)", m.title())
+                    } else if pending.is_some() && *m == now {
+                        format!("{} (until the restart)", m.title())
+                    } else if *m != now && (*m == GfxMode::Ultimate || now == GfxMode::Ultimate) {
+                        format!("{} (needs a restart)", m.title())
+                    } else {
+                        m.title().to_string()
+                    };
                     RadioItem { label, ..Default::default() }
                 })
                 .collect();
             items.push(
                 RadioGroup {
-                    selected: modes.iter().position(|m| *m == now).unwrap_or(usize::MAX),
+                    selected: if self.gfx_blank {
+                        usize::MAX
+                    } else {
+                        modes.iter().position(|m| *m == chosen).unwrap_or(usize::MAX)
+                    },
                     select: Box::new(move |t: &mut Self, i| {
                         if let Some(m) = modes.get(i) {
                             t.send(TrayCmd::Gfx(*m, ksni::current_xdg_activation_token()));
@@ -186,6 +205,8 @@ pub fn start(tx: Sender<TrayCmd>, wake: impl Fn() + Send + 'static) -> Result<Ha
         choices: Vec::new(),
         status: String::new(),
         gfx: None,
+        gfx_pending: None,
+        gfx_blank: false,
     };
     tray.disable_dbus_name(crate::ctl::in_flatpak()).spawn().map_err(|e| e.to_string())
 }

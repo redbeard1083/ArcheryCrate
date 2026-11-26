@@ -98,6 +98,8 @@ pub struct Snapshot {
     pub has_lid_matrix: bool,
     /// asusd's own power limits for each mode, plugged in and on battery.
     pub tunings: Vec<Tuning>,
+    /// The graphics mode chosen to start after the next restart (None: nothing waiting).
+    pub gfx_pending: Option<crate::ctl::GfxMode>,
 }
 
 /// Notices the fans held at (nearly) full speed while nothing is warm, for a minute and a
@@ -201,6 +203,7 @@ impl Snapshot {
             mux: m.map(|a| a.path.clone()),
             mux_now: m.and_then(|a| a.current),
             cardwire: self.cardwire_mode.is_some(),
+            pending: self.gfx_pending,
         }
     }
 
@@ -453,6 +456,8 @@ impl Sampler {
             }
             s.cardwire_mode = self.cardwire_cache.clone();
         }
+        // A graphics switch waiting for the restart (the firmware only takes it then).
+        s.gfx_pending = crate::ctl::read_pending_gfx().filter(|p| *p != s.gfx_mode());
 
         // Lid matrix display (USB)
         if let Ok(dir) = fs::read_dir("/sys/bus/usb/devices") {
