@@ -978,69 +978,6 @@ impl CrateApp {
         let batt_avg = (!self.hist_batt_w.is_empty())
             .then(|| self.hist_batt_w.iter().sum::<f32>() / self.hist_batt_w.len() as f32);
 
-        // 1. Right now, with the modes one click away.
-        let mut perf_pick: Option<String> = None;
-        let mut gfx_pick: Option<GfxMode> = None;
-        card(ui, "Right now", |ui| {
-            ui.horizontal(|ui| {
-                // As tall as the buttons from the start, so everything in the row lines up.
-                ui.set_min_height(34.0);
-                ui.label(RichText::new("Performance").color(DIM()));
-                let mut choices: Vec<String> = s.profile_choices.iter().filter(|c| *c != "custom").cloned().collect();
-                if choices.is_empty() {
-                    choices = vec!["quiet".into(), "balanced".into(), "performance".into()];
-                }
-                let titles: Vec<&str> = choices.iter().map(|c| profile_title(c)).collect();
-                let mut i = choices.iter().position(|c| Some(c) == s.profile.as_ref()).unwrap_or(usize::MAX);
-                if segmented(ui, &titles, &mut i) {
-                    perf_pick = choices.get(i).cloned();
-                }
-                let has_gfx = s.attr("gpu_mux_mode").is_some() || s.attr("dgpu_disable").is_some() || s.cardwire_mode.is_some();
-                if has_gfx {
-                    ui.add_space(18.0);
-                    ui.label(RichText::new("Graphics").color(DIM()));
-                    let modes = GfxMode::ALL;
-                    let titles: Vec<&str> = modes.iter().map(|m| m.title()).collect();
-                    let chosen = s.gfx_pending.unwrap_or(s.gfx_mode());
-                    let mut i = modes.iter().position(|m| *m == chosen).unwrap_or(usize::MAX);
-                    if segmented(ui, &titles, &mut i) {
-                        gfx_pick = modes.get(i).copied();
-                    }
-                    if let Some(p) = s.gfx_pending {
-                        ui.label(RichText::new(format!("({} after the restart)", p.title())).color(AMBER()));
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            // Power: where it comes from and how much is used.
-            let b = s.battery_pct.map(|b| format!("{b}%")).unwrap_or("–".into());
-            let line = match s.on_ac {
-                Some(false) => {
-                    let draw = batt_avg.or(s.battery_power_w).map(|w| format!(" · drawing {w:.0} W")).unwrap_or_default();
-                    let eta = battery_eta(&s, batt_avg).map(|e| format!(" · {}", e.to_lowercase())).unwrap_or_default();
-                    format!("🔋  On battery · {b}{draw}{eta}")
-                }
-                _ => {
-                    let dgpu_w = s.dgpu().filter(|d| d.awake).and_then(|d| d.power_w).unwrap_or(0.0);
-                    let chips = package_w.map(|w| format!(" · processor and graphics using {:.0} W", w + dgpu_w)).unwrap_or_default();
-                    let state = match s.battery_status.as_str() {
-                        "Charging" => battery_eta(&s, batt_avg).map(|e| format!("charging, {}", e.to_lowercase())).unwrap_or("charging".into()),
-                        "Full" => "full".into(),
-                        _ => "not charging".into(),
-                    };
-                    format!("🔌  Plugged in · battery {b}, {state}{chips}")
-                }
-            };
-            ui.label(RichText::new(line).color(TEXT()));
-        });
-        if let Some(p) = perf_pick {
-            self.run(ctl::set_profile(&p));
-        }
-        if let Some(m) = gfx_pick {
-            self.pick_gfx(m);
-        }
-        ui.add_space(4.0);
-
         // 6. How much history the graphs show.
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1061,17 +998,8 @@ impl CrateApp {
         // 3 + 4. One load graph for the CPU and both GPUs; an idle discrete GPU is dimmed.
         let series_color = |k: usize, fixed: Color32| if is_neon() { rainbow(k as f32 / 3.0) } else { fixed };
         let clock_text = |m: u32| if m == 0 { "clock idle".to_string() } else { format!("{m} MHz") };
-        struct Col {
-            name: &'static str,
-            color: Color32,
-            value: Option<String>,
-            note: String,
-            lines: Vec<String>,
-            dim: bool,
-            hist: Vec<f32>,
-        }
         let mut cols = vec![Col {
-            name: "CPU",
+            name: "CPU".into(),
             color: series_color(0, CYAN()),
             value: s.cpu_load_pct.map(|l| format!("{l:.0}%")),
             note: String::new(),
@@ -1085,7 +1013,7 @@ impl CrateApp {
         let eco = s.gfx_mode() == GfxMode::Eco;
         match s.dgpu() {
             Some(d) if d.awake => cols.push(Col {
-                name: "Discrete GPU",
+                name: "Discrete GPU".into(),
                 color: series_color(1, ACCENT()),
                 value: d.busy_pct.map(|b| format!("{b}%")),
                 note: String::new(),
@@ -1097,7 +1025,7 @@ impl CrateApp {
                 hist: recent(&self.hist_dgpu_load, secs),
             }),
             other => cols.push(Col {
-                name: "Discrete GPU",
+                name: "Discrete GPU".into(),
                 color: series_color(1, ACCENT()),
                 value: None,
                 note: if eco || other.is_none() { "Off (Eco)".into() } else { "Asleep".into() },
@@ -1111,7 +1039,7 @@ impl CrateApp {
         }
         if let Some(i) = s.igpu() {
             cols.push(Col {
-                name: "Integrated GPU",
+                name: "Integrated GPU".into(),
                 color: series_color(2, GREEN()),
                 value: i.busy_pct.map(|b| format!("{b}%")),
                 note: String::new(),
@@ -1124,27 +1052,7 @@ impl CrateApp {
             });
         }
         card(ui, "Load", |ui| {
-            ui.columns(cols.len(), |c| {
-                for (k, col) in cols.iter().enumerate() {
-                    let ui = &mut c[k];
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), egui::Sense::hover());
-                        ui.painter().circle_filled(r.center(), 5.0, if col.dim { DIM() } else { col.color });
-                        ui.label(RichText::new(col.name).color(TEXT()));
-                    });
-                    match &col.value {
-                        Some(v) => ui.label(RichText::new(v).size(34.0).strong().color(col.color)),
-                        None => ui.label(RichText::new(&col.note).size(26.0).color(DIM())),
-                    };
-                    for l in col.lines.iter().filter(|l| !l.is_empty()) {
-                        ui.label(RichText::new(l).color(DIM()).size(12.5));
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            let series: Vec<crate::widgets::Series> =
-                cols.iter().map(|c| crate::widgets::Series { values: &c.hist, color: c.color, dim: c.dim }).collect();
-            multi_graph(ui, &series, &[25.0, 50.0, 75.0, 100.0], 150.0);
+            combined_graph(ui, &cols, (0.0, 100.0), &[25.0, 50.0, 75.0, 100.0], "%", 150.0);
             let peak = |q: &VecDeque<f32>| recent_peak(q, secs).map(|p| format!("{p:.0}%")).unwrap_or("–".into());
             ui.label(
                 RichText::new(format!(
@@ -1160,12 +1068,9 @@ impl CrateApp {
         });
         ui.add_space(4.0);
 
-        // 2. Each temperature with the fan that cools it, on the same graph.
-        let fan_of = |name: &str| -> Option<(u32, Vec<f32>)> {
-            let i = s.fans.iter().position(|(l, _)| l == name)?;
-            Some((s.fans[i].1, self.hist_fans.get(i).map(|q| recent(q, secs)).unwrap_or_default()))
-        };
-        let temp_fan_box = |ui: &mut Ui, now: Option<f32>, q: &VecDeque<f32>, fan: Option<(u32, Vec<f32>)>| {
+        // Temperatures, each with its fan's speed.
+        let fan_rpm = |name: &str| s.fans.iter().find(|(l, _)| l == name).map(|(_, r)| *r);
+        let temp_box = |ui: &mut Ui, now: Option<f32>, q: &VecDeque<f32>, fan: Option<u32>| {
             ui.horizontal(|ui| {
                 match now {
                     Some(t) => {
@@ -1178,7 +1083,7 @@ impl CrateApp {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.vertical(|ui| {
-                        if let Some((rpm, _)) = &fan {
+                        if let Some(rpm) = fan {
                             ui.label(RichText::new(format!("fan {rpm} rpm")).strong().color(CYAN()));
                         }
                         if let Some(p) = recent_peak(q, secs) {
@@ -1188,51 +1093,123 @@ impl CrateApp {
                 });
             });
             let color = now.map(temp_color).unwrap_or(DIM());
-            let plot = temp_graph(ui, &recent(q, secs), color, 130.0);
-            if let Some((rpm, h)) = &fan {
-                let c = Color32::from_rgba_unmultiplied(CYAN().r(), CYAN().g(), CYAN().b(), 170);
-                overlay_line(ui, plot, h, 0.0, 6500.0, c, &format!("- - fan {rpm} rpm"));
-            }
+            temp_graph(ui, &recent(q, secs), color, 130.0);
             ui.label(RichText::new(span_text(q.len(), secs)).color(DIM()).size(12.0));
         };
         ui.columns(2, |c| {
-            card(&mut c[0], "CPU temperature and fan", |ui| {
-                temp_fan_box(ui, s.cpu_temp_c, &self.hist_cpu_temp, fan_of("cpu_fan"));
+            card(&mut c[0], "CPU temperature", |ui| {
+                temp_box(ui, s.cpu_temp_c, &self.hist_cpu_temp, fan_rpm("cpu_fan"));
             });
-            card(&mut c[1], &format!("{gpu_name} temperature and fan"), |ui| {
-                temp_fan_box(ui, gpu.as_ref().and_then(|x| x.temp_c), &self.hist_gpu_temp, fan_of("gpu_fan"));
+            card(&mut c[1], &format!("{gpu_name} temperature"), |ui| {
+                temp_box(ui, gpu.as_ref().and_then(|x| x.temp_c), &self.hist_gpu_temp, fan_rpm("gpu_fan"));
             });
         });
-        // Fans the two cards above don't cover (e.g. a middle fan).
-        let others: Vec<(String, u32)> =
-            s.fans.iter().filter(|(l, _)| l != "cpu_fan" && l != "gpu_fan").cloned().collect();
-        if !others.is_empty() {
-            ui.add_space(4.0);
-            card(ui, "Other fans", |ui| {
-                for (l, rpm) in &others {
-                    stat_row(ui, &fan_label(l), format!("{rpm} rpm"));
-                }
-            });
-        }
         ui.add_space(4.0);
 
-        // Memory and battery.
+        // Fans and memory, each as one combined graph like Load.
+        let fan_cols: Vec<Col> = s
+            .fans
+            .iter()
+            .enumerate()
+            .map(|(i, (label, rpm))| {
+                let q = self.hist_fans.get(i);
+                Col {
+                    name: fan_label(label),
+                    color: series_color(i, if i == 0 { CYAN() } else { ACCENT() }),
+                    value: Some(format!("{rpm} rpm")),
+                    note: String::new(),
+                    lines: vec![q
+                        .and_then(|q| recent_peak(q, secs))
+                        .map(|p| format!("peak {p:.0} rpm"))
+                        .unwrap_or_default()],
+                    dim: false,
+                    hist: q.map(|q| recent(q, secs)).unwrap_or_default(),
+                }
+            })
+            .collect();
+        let pct = |u: f32, t: f32| 100.0 * u / t.max(0.001);
+        let mut mem_cols = vec![];
+        if let (Some(u), Some(t)) = (s.mem_used_gb, s.mem_total_gb) {
+            let p = pct(u, t);
+            mem_cols.push(Col {
+                name: "System RAM".into(),
+                color: series_color(0, GREEN()),
+                value: Some(format!("{p:.0}%")),
+                note: String::new(),
+                lines: vec![format!("{u:.1} of {t:.1} GB")],
+                dim: false,
+                hist: recent(&self.hist_mem, secs),
+            });
+        }
+        if let Some((Some(u), Some(t))) = gpu.as_ref().map(|x| (x.vram_used_mb, x.vram_total_mb)) {
+            let p = pct(u as f32, t as f32);
+            mem_cols.push(Col {
+                name: format!("{gpu_name} memory"),
+                color: series_color(1, CYAN()),
+                value: Some(format!("{p:.0}%")),
+                note: String::new(),
+                lines: vec![format!("{:.1} of {:.1} GB", u as f32 / 1024.0, t as f32 / 1024.0)],
+                dim: false,
+                hist: recent(&self.hist_vram, secs),
+            });
+        }
+        // Nearly full memory shows in amber, then red.
+        for c in &mut mem_cols {
+            let now = c.value.as_deref().and_then(|v| v.trim_end_matches('%').parse::<f32>().ok()).unwrap_or(0.0);
+            if now >= 80.0 {
+                c.color = level_color(now / 100.0, c.color);
+            }
+        }
+        ui.columns(2, |c| {
+            card(&mut c[0], "Fans", |ui| {
+                if fan_cols.is_empty() {
+                    ui.label(RichText::new("No fan sensors found").color(DIM()));
+                } else {
+                    combined_graph(ui, &fan_cols, (0.0, 6500.0), &[2000.0, 4000.0, 6000.0], "", 130.0);
+                    ui.label(RichText::new(format!("{} · rpm", span_text(self.hist_fans.first().map_or(0, |q| q.len()), secs))).color(DIM()).size(12.0));
+                }
+            });
+            card(&mut c[1], "Memory", |ui| {
+                if mem_cols.is_empty() {
+                    ui.label(RichText::new("Reading memory…").color(DIM()));
+                } else {
+                    combined_graph(ui, &mem_cols, (0.0, 100.0), &[25.0, 50.0, 75.0, 100.0], "%", 130.0);
+                    ui.label(RichText::new(span_text(self.hist_mem.len(), secs)).color(DIM()).size(12.0));
+                }
+            });
+        });
+        ui.add_space(4.0);
+
+        // Storage and battery.
         ui.columns(2, |cols| {
-            card(&mut cols[0], "Memory", |ui| {
-                stat_row(ui, "System RAM", match (s.mem_used_gb, s.mem_total_gb) {
-                    (Some(u), Some(t)) => format!("{u:.1} / {t:.1} GB ({:.0}%)", 100.0 * u / t.max(0.1)),
-                    _ => "–".into(),
-                });
-                let mem = recent(&self.hist_mem, secs);
-                sparkline(ui, &mem, 0.0, 100.0, level_color(mem.last().copied().unwrap_or(0.0) / 100.0, GREEN()), 38.0);
-                stat_row(ui, &format!("{gpu_name} memory"), match gpu.as_ref().map(|x| (x.vram_used_mb, x.vram_total_mb)) {
-                    Some((Some(u), Some(t))) => {
-                        format!("{:.1} / {:.1} GB ({:.0}%)", u as f32 / 1024.0, t as f32 / 1024.0, 100.0 * u as f32 / t.max(1) as f32)
-                    }
-                    _ => "–".into(),
-                });
-                let vram = recent(&self.hist_vram, secs);
-                sparkline(ui, &vram, 0.0, 100.0, level_color(vram.last().copied().unwrap_or(0.0) / 100.0, GREEN()), 38.0);
+            card(&mut cols[0], "Storage", |ui| {
+                if s.disks.is_empty() {
+                    ui.label(RichText::new("Reading drives…").color(DIM()));
+                }
+                for d in &s.disks {
+                    let used = d.used_frac();
+                    let color = level_color(used, GREEN());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&d.name).strong().color(TEXT()));
+                        ui.label(RichText::new(&d.mount).color(DIM()).size(12.5));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} free of {}",
+                                    crate::hw::human_bytes(d.avail),
+                                    crate::hw::human_bytes(d.size)
+                                ))
+                                .color(TEXT()),
+                            );
+                        });
+                    });
+                    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), egui::Sense::hover());
+                    let p = ui.painter();
+                    p.rect_filled(rect, 5.0, CARD_HI());
+                    let fill = egui::Rect::from_min_size(rect.min, vec2(rect.width() * used.clamp(0.0, 1.0), rect.height()));
+                    p.rect_filled(fill, 5.0, color);
+                    ui.add_space(4.0);
+                }
             });
             // 5. Battery, with the time left (or to full) at the current draw.
             card(&mut cols[1], "Battery", |ui| {
@@ -1260,38 +1237,6 @@ impl CrateApp {
                     });
                 });
             });
-        });
-        ui.add_space(4.0);
-
-        // Free space on each drive.
-        card(ui, "Storage", |ui| {
-            if s.disks.is_empty() {
-                ui.label(RichText::new("Reading drives…").color(DIM()));
-            }
-            for d in &s.disks {
-                let used = d.used_frac();
-                let color = level_color(used, GREEN());
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&d.name).strong().color(TEXT()));
-                    ui.label(RichText::new(&d.mount).color(DIM()).size(12.5));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "{} free of {}",
-                                crate::hw::human_bytes(d.avail),
-                                crate::hw::human_bytes(d.size)
-                            ))
-                            .color(TEXT()),
-                        );
-                    });
-                });
-                let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), egui::Sense::hover());
-                let p = ui.painter();
-                p.rect_filled(rect, 5.0, CARD_HI());
-                let fill = egui::Rect::from_min_size(rect.min, vec2(rect.width() * used.clamp(0.0, 1.0), rect.height()));
-                p.rect_filled(fill, 5.0, color);
-                ui.add_space(4.0);
-            }
         });
     }
 
@@ -1446,13 +1391,26 @@ impl CrateApp {
                 p.rect_filled(rect, 5.0, CARD_HI());
                 p.rect_filled(egui::Rect::from_min_size(rect.min, vec2(rect.width() * b / 100.0, rect.height())), 5.0, color);
                 ui.add_space(4.0);
-                stat_row(ui, "Charger", match s.on_ac {
-                    Some(true) => "plugged in".into(),
-                    Some(false) => "unplugged".into(),
-                    None => "–".into(),
-                });
-                stat_row(ui, "Charge limit", s.charge_limit.map(|c| format!("{c}%")).unwrap_or("–".into()));
-                stat_row(ui, "Health", s.battery_health_pct.map(|h| format!("{h:.0}%")).unwrap_or("–".into()));
+                let charger = match s.on_ac {
+                    Some(true) => "plugged in".to_string(),
+                    Some(false) => "unplugged".to_string(),
+                    None => "–".to_string(),
+                };
+                let limit = s.charge_limit.map(|c| format!("{c}%")).unwrap_or("–".into());
+                let health = s.battery_health_pct.map(|h| format!("{h:.0}%")).unwrap_or("–".into());
+                // Rows sit about 32 px apart and the last needs ~22 px of text: when the tile is short, fold the details together
+                // rather than let the last ones be cut off.
+                let room = ui.available_height();
+                if room >= 2.0 * 32.0 + 22.0 {
+                    stat_row(ui, "Charger", charger);
+                    stat_row(ui, "Charge limit", limit);
+                    stat_row(ui, "Health", health);
+                } else if room >= 32.0 + 22.0 {
+                    stat_row(ui, "Charger", charger);
+                    stat_row(ui, "Limit · health", format!("{limit} · {health}"));
+                } else {
+                    stat_row(ui, "Charger · limit · health", format!("{charger} · {limit} · {health}"));
+                }
             });
         });
     }
@@ -2773,6 +2731,43 @@ pub fn gfx_restart_text(m: GfxMode) -> (&'static str, &'static str) {
             "Handing the screen back to the integrated GPU only takes effect after the laptop restarts.",
         )
     }
+}
+
+/// One line of a combined graph and the column above it: a name with a colour dot, the value
+/// now in large type (or a note when idle), a few detail lines, and the history.
+struct Col {
+    name: String,
+    color: Color32,
+    value: Option<String>,
+    note: String,
+    lines: Vec<String>,
+    dim: bool,
+    hist: Vec<f32>,
+}
+
+/// Columns side by side over one graph holding all their lines (Home's Load, Fans, Memory).
+fn combined_graph(ui: &mut Ui, cols: &[Col], range: (f32, f32), ticks: &[f32], unit: &str, height: f32) {
+    ui.columns(cols.len().max(1), |c| {
+        for (k, col) in cols.iter().enumerate() {
+            let ui = &mut c[k];
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().circle_filled(r.center(), 5.0, if col.dim { DIM() } else { col.color });
+                ui.label(RichText::new(&col.name).color(TEXT()));
+            });
+            match &col.value {
+                Some(v) => ui.label(RichText::new(v).size(34.0).strong().color(col.color)),
+                None => ui.label(RichText::new(&col.note).size(26.0).color(DIM())),
+            };
+            for l in col.lines.iter().filter(|l| !l.is_empty()) {
+                ui.label(RichText::new(l).color(DIM()).size(12.5));
+            }
+        }
+    });
+    ui.add_space(6.0);
+    let series: Vec<crate::widgets::Series> =
+        cols.iter().map(|c| crate::widgets::Series { values: &c.hist, color: c.color, dim: c.dim }).collect();
+    multi_graph(ui, &series, range, ticks, unit, height);
 }
 
 /// The most points a Home graph draws; longer histories are averaged down to this.

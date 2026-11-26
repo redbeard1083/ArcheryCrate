@@ -694,26 +694,6 @@ pub fn history_graph(
     plot
 }
 
-/// A second history drawn over a graph's plotting area on its own scale (`lo`..`hi`), as a
-/// thin dashed line with a caption in the top-right corner: e.g. a fan's speed over its
-/// temperature.
-pub fn overlay_line(ui: &Ui, plot: Rect, values: &[f32], lo: f32, hi: f32, color: Color32, caption: &str) {
-    let p = ui.painter();
-    let n = values.len();
-    if n >= 2 {
-        let pts: Vec<Pos2> = values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| {
-                let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
-                pos2(plot.left() + plot.width() * i as f32 / (n - 1) as f32, plot.bottom() - t * plot.height())
-            })
-            .collect();
-        p.extend(Shape::dashed_line(&pts, Stroke::new(1.6, color), 6.0, 4.0));
-    }
-    p.text(plot.right_top() + vec2(-4.0, 2.0), Align2::RIGHT_TOP, caption, FontId::proportional(12.0), color);
-}
-
 /// One history in a `multi_graph`.
 pub struct Series<'a> {
     pub values: &'a [f32],
@@ -722,18 +702,19 @@ pub struct Series<'a> {
     pub dim: bool,
 }
 
-/// Several 0–100 % histories on one scale, each in its own colour, newest at the right; each
-/// line's current value is marked with a dot.
-pub fn multi_graph(ui: &mut Ui, series: &[Series], ticks: &[f32], height: f32) {
+/// Several histories on one scale (`range`, gridlines at `ticks` labelled with `tick_unit`),
+/// each in its own colour, newest at the right; each line's current value is marked with a dot.
+pub fn multi_graph(ui: &mut Ui, series: &[Series], range: (f32, f32), ticks: &[f32], tick_unit: &str, height: f32) {
+    let (lo, hi) = range;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
     let p = ui.painter();
     p.rect_filled(rect, 6.0, GRAPH_BG());
-    let plot = Rect::from_min_max(rect.min + vec2(40.0, 8.0), rect.max - vec2(14.0, 8.0));
-    let y_of = |t: f32| plot.bottom() - (t / 100.0).clamp(0.0, 1.0) * plot.height();
+    let plot = Rect::from_min_max(rect.min + vec2(48.0, 8.0), rect.max - vec2(14.0, 8.0));
+    let y_of = |t: f32| plot.bottom() - ((t - lo) / (hi - lo)).clamp(0.0, 1.0) * plot.height();
     for t in ticks {
         let y = y_of(*t);
         p.line_segment([pos2(plot.left(), y), pos2(plot.right(), y)], Stroke::new(1.0, GRID()));
-        p.text(pos2(plot.left() - 6.0, y), Align2::RIGHT_CENTER, format!("{t:.0}%"), FontId::proportional(11.0), DIM());
+        p.text(pos2(plot.left() - 6.0, y), Align2::RIGHT_CENTER, format!("{t:.0}{tick_unit}"), FontId::proportional(11.0), DIM());
     }
     let n = series.iter().map(|s| s.values.len()).max().unwrap_or(0);
     if n < 2 {
