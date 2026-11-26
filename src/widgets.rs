@@ -595,8 +595,9 @@ pub fn sparkline(ui: &mut Ui, values: &[f32], lo: f32, hi: f32, color: Color32, 
 
 /// A temperature history with a degree scale: gridlines labelled 40°…100°, the line in
 /// `color`, and a dot with the current value at its right end.
-pub fn temp_graph(ui: &mut Ui, values: &[f32], color: Color32, height: f32) {
-    history_graph(ui, values, (30.0, 100.0), &[40.0, 60.0, 80.0, 100.0], "°", "°C", color, height, Line::Heat);
+/// Returns the plotting area, for `overlay_line`.
+pub fn temp_graph(ui: &mut Ui, values: &[f32], color: Color32, height: f32) -> Rect {
+    history_graph(ui, values, (30.0, 100.0), &[40.0, 60.0, 80.0, 100.0], "°", "°C", color, height, Line::Heat)
 }
 
 /// How a history line is coloured.
@@ -622,7 +623,7 @@ pub fn history_graph(
     color: Color32,
     height: f32,
     line: Line,
-) {
+) -> Rect {
     let rgb = line == Line::Rainbow && is_neon();
     let heat = line == Line::Heat;
     let (lo, hi) = range;
@@ -644,7 +645,7 @@ pub fn history_graph(
             p.circle_filled(at, 4.5, c);
             p.text(at + vec2(8.0, 0.0), Align2::LEFT_CENTER, format!("{v:.0}{unit}"), FontId::proportional(13.0), c);
         }
-        return;
+        return plot;
     }
     let n = values.len();
     let pts: Vec<Pos2> = values
@@ -690,6 +691,89 @@ pub fn history_graph(
     p.circle_filled(last, 4.5, end);
     p.circle_stroke(last, 4.5, Stroke::new(1.5, GRAPH_BG()));
     p.text(last + vec2(8.0, 0.0), Align2::LEFT_CENTER, format!("{now:.0}{unit}"), FontId::proportional(13.0), end);
+    plot
+}
+
+/// A second history drawn over a graph's plotting area on its own scale (`lo`..`hi`), as a
+/// thin dashed line with a caption in the top-right corner: e.g. a fan's speed over its
+/// temperature.
+pub fn overlay_line(ui: &Ui, plot: Rect, values: &[f32], lo: f32, hi: f32, color: Color32, caption: &str) {
+    let p = ui.painter();
+    let n = values.len();
+    if n >= 2 {
+        let pts: Vec<Pos2> = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+                pos2(plot.left() + plot.width() * i as f32 / (n - 1) as f32, plot.bottom() - t * plot.height())
+            })
+            .collect();
+        p.extend(Shape::dashed_line(&pts, Stroke::new(1.6, color), 6.0, 4.0));
+    }
+    p.text(plot.right_top() + vec2(-4.0, 2.0), Align2::RIGHT_TOP, caption, FontId::proportional(12.0), color);
+}
+
+/// One history in a `multi_graph`.
+pub struct Series<'a> {
+    pub values: &'a [f32],
+    pub color: Color32,
+    /// Drawn faintly (a device that's asleep or off).
+    pub dim: bool,
+}
+
+/// Several 0–100 % histories on one scale, each in its own colour, newest at the right; each
+/// line's current value is marked with a dot.
+pub fn multi_graph(ui: &mut Ui, series: &[Series], ticks: &[f32], height: f32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 6.0, GRAPH_BG());
+    let plot = Rect::from_min_max(rect.min + vec2(40.0, 8.0), rect.max - vec2(14.0, 8.0));
+    let y_of = |t: f32| plot.bottom() - (t / 100.0).clamp(0.0, 1.0) * plot.height();
+    for t in ticks {
+        let y = y_of(*t);
+        p.line_segment([pos2(plot.left(), y), pos2(plot.right(), y)], Stroke::new(1.0, GRID()));
+        p.text(pos2(plot.left() - 6.0, y), Align2::RIGHT_CENTER, format!("{t:.0}%"), FontId::proportional(11.0), DIM());
+    }
+    let n = series.iter().map(|s| s.values.len()).max().unwrap_or(0);
+    if n < 2 {
+        return;
+    }
+    let alpha = |c: Color32, a: u8| Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a);
+    // Faint ones first, so an active line is drawn on top.
+    let mut order: Vec<&Series> = series.iter().collect();
+    order.sort_by_key(|s| !s.dim);
+    for s in order {
+        let m = s.values.len();
+        if m == 0 {
+            continue;
+        }
+        // Newest at the right edge; a shorter history starts later.
+        let pts: Vec<Pos2> = s
+            .values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| pos2(plot.right() - plot.width() * (m - 1 - i) as f32 / (n - 1) as f32, y_of(*v)))
+            .collect();
+        let c = if s.dim { alpha(s.color, 70) } else { s.color };
+        if !s.dim {
+            for w in pts.windows(2) {
+                p.add(Shape::convex_polygon(
+                    vec![w[0], w[1], pos2(w[1].x, plot.bottom()), pos2(w[0].x, plot.bottom())],
+                    alpha(s.color, 16),
+                    Stroke::NONE,
+                ));
+            }
+            if is_neon() {
+                p.add(Shape::line(pts.clone(), Stroke::new(7.0, alpha(s.color, 40))));
+            }
+        }
+        p.add(Shape::line(pts.clone(), Stroke::new(if s.dim { 1.5 } else { 2.2 }, c)));
+        if let Some(last) = pts.last() {
+            p.circle_filled(*last, 4.0, c);
+            p.circle_stroke(*last, 4.0, Stroke::new(1.5, GRAPH_BG()));
+        }
+    }
 }
 
 /// iOS-style switch.

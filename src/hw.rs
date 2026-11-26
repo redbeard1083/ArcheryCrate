@@ -69,6 +69,9 @@ pub struct Snapshot {
     pub battery_pct: Option<u8>,
     pub battery_status: String,
     pub battery_power_w: Option<f32>,
+    /// Energy in the battery now, and when full (Wh).
+    pub battery_energy_wh: Option<f32>,
+    pub battery_full_wh: Option<f32>,
     pub battery_health_pct: Option<f32>,
     pub battery_cycles: Option<u32>,
     pub on_ac: Option<bool>,
@@ -290,6 +293,17 @@ impl Sampler {
                     s.battery_status = read(p.join("status")).unwrap_or_default();
                     s.battery_power_w = read_num::<f64>(p.join("power_now")).map(|v| (v / 1e6) as f32);
                     s.battery_cycles = read_num(p.join("cycle_count"));
+                    // Energy in the battery now and when full (Wh), for "time left". Batteries
+                    // that count charge (µAh) instead are converted with the voltage.
+                    let volts = read_num::<f64>(p.join("voltage_now")).map(|v| v / 1e6);
+                    let wh = |energy: &str, charge: &str| {
+                        read_num::<f64>(p.join(energy))
+                            .map(|v| v / 1e6)
+                            .or_else(|| Some(read_num::<f64>(p.join(charge))? / 1e6 * volts?))
+                            .map(|v| v as f32)
+                    };
+                    s.battery_energy_wh = wh("energy_now", "charge_now");
+                    s.battery_full_wh = wh("energy_full", "charge_full");
                     let full = read_num::<f64>(p.join("energy_full")).or_else(|| read_num(p.join("charge_full")));
                     let design = read_num::<f64>(p.join("energy_full_design"))
                         .or_else(|| read_num(p.join("charge_full_design")));

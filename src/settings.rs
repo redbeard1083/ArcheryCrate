@@ -44,6 +44,9 @@ pub struct Settings {
     /// How fast Neon's rainbow moves, as a multiple of the normal speed (None = normal).
     #[serde(default)]
     pub rainbow_speed: Option<f32>,
+    /// How much history Home's graphs show, in seconds (60, 300 or 900; None = 60).
+    #[serde(default)]
+    pub home_range_secs: Option<u32>,
     /// Home as a 3×3 grid that fits the window (instead of the detailed, scrolling page).
     #[serde(default)]
     pub home_grid: bool,
