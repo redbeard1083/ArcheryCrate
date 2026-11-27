@@ -841,15 +841,6 @@ pub fn power_limits(profile: &str, values: &[(String, i64)], tuning_on: bool, fa
 /// Every power-limit action's label starts with this.
 pub const POWER_LIMITS_LABEL: &str = "Power limits for";
 
-/// Turn the laptop off. A full power-off also resets the laptop's fan controller; a restart doesn't.
-pub fn shut_down_laptop() -> Action {
-    Action {
-        label: "Shutting the laptop down".into(),
-        groups: vec![vec![argv(&["systemctl", "poweroff"]), argv(&["loginctl", "poweroff"])]],
-        ..Default::default()
-    }
-}
-
 /// Every graphics-mode action's label starts with this.
 pub const GFX_LABEL: &str = "Graphics mode →";
 
