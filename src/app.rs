@@ -132,6 +132,9 @@ fn power_limit_unit(name: &str) -> &'static str {
 struct Shot {
     path: PathBuf,
     frames: u32,
+    /// When the window opened; ARCHERYCRATE_SHOT_WAIT=<seconds> waits that long before the
+    /// picture so the graphs have some history (for the README's pictures).
+    started: Instant,
     requested: bool,
     done: Arc<AtomicBool>,
     error: Arc<Mutex<Option<String>>>,
@@ -332,6 +335,7 @@ impl CrateApp {
             shot: screenshot.map(|path| Shot {
                 path,
                 frames: 0,
+                started: Instant::now(),
                 requested: false,
                 done: Arc::new(AtomicBool::new(false)),
                 error: Arc::new(Mutex::new(None)),
@@ -2964,7 +2968,8 @@ impl eframe::App for CrateApp {
 
         if let Some(shot) = &mut self.shot {
             shot.frames += 1;
-            if shot.frames >= 120 && !shot.requested {
+            let wait = std::env::var("ARCHERYCRATE_SHOT_WAIT").ok().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            if shot.frames >= 120 && shot.started.elapsed() >= Duration::from_secs(wait) && !shot.requested {
                 shot.requested = true;
                 let path = shot.path.clone();
                 let done = shot.done.clone();

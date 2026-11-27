@@ -22,7 +22,7 @@ jobs:
     # Built on an older Ubuntu so the AppImage also runs on older Linux versions (glibc).
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System libraries and packaging tools
         run: |
           sudo apt-get update
@@ -33,7 +33,7 @@ jobs:
       - run: cargo test --locked
       - name: Build the AppImage
         run: bash packaging/build-appimage.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: appimage
           path: packaging/out/ArcheryCrate-x86_64.AppImage
@@ -43,7 +43,7 @@ jobs:
     # Not yet tested: a failure here doesn't stop the release.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Flatpak tools
         run: |
           sudo apt-get update
@@ -51,7 +51,7 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Build the Flatpak
         run: bash packaging/build-flatpak.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: flatpak
           path: packaging/out/ArcheryCrate.flatpak
@@ -61,8 +61,8 @@ jobs:
     if: ${{ always() && needs.appimage.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
