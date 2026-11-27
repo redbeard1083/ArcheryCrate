@@ -43,6 +43,9 @@ pub struct Settings {
     /// Neon without the moving rainbow.
     #[serde(default)]
     pub neon_calm: bool,
+    /// Dark and Light: draw the graphs the Neon way (glowing lines, moving rainbow).
+    #[serde(default)]
+    pub bold_graphs: bool,
     /// How fast Neon's rainbow moves, as a multiple of the normal speed (None = normal).
     #[serde(default)]
     pub rainbow_speed: Option<f32>,

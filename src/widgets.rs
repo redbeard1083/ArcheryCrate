@@ -30,6 +30,8 @@ pub enum Palette {
 static PALETTE: AtomicU8 = AtomicU8::new(Palette::Dark as u8);
 /// "Calm it down" in Neon: the rainbow stops moving (and the window stops redrawing for it).
 static CALM: AtomicBool = AtomicBool::new(false);
+/// "Bold rainbow graphs" in Dark and Light: their graphs drawn the Neon way.
+static BOLD_GRAPHS: AtomicBool = AtomicBool::new(false);
 /// The rainbow's speed (an f32's bits; 1.0 = one full cycle about every 6 s).
 static SPEED: AtomicU32 = AtomicU32::new(0x3f80_0000);
 
@@ -187,7 +189,17 @@ pub fn set_calm(calm: bool) {
 
 /// Whether Neon's colours are moving right now (the window then keeps redrawing).
 pub fn rainbow_moving() -> bool {
-    is_neon() && !CALM.load(Ordering::Relaxed)
+    bold_graphs() && !CALM.load(Ordering::Relaxed)
+}
+
+pub fn set_bold_graphs(on: bool) {
+    BOLD_GRAPHS.store(on, Ordering::Relaxed);
+}
+
+/// Graphs with glowing lines, rainbow load lines and the gauge's colour sweep: always in Neon,
+/// and in Dark and Light when "Bold rainbow graphs" is on.
+pub fn bold_graphs() -> bool {
+    is_neon() || BOLD_GRAPHS.load(Ordering::Relaxed)
 }
 
 /// Where the moving rainbow is, in turns (0..1 is one full cycle, about every 6 s).
@@ -209,8 +221,8 @@ pub fn rainbow_phase() -> f32 {
 
 /// A rainbow colour `offset` turns along from the moving phase.
 pub fn rainbow(offset: f32) -> Color32 {
-    // A little deeper on Light Neon's pale background, so yellow and cyan stay visible.
-    if palette() == Palette::NeonLight {
+    // A little deeper on pale backgrounds, so yellow and cyan stay visible.
+    if !is_dark() {
         hsv(rainbow_phase() + offset, 1.0, 0.85)
     } else {
         hsv(rainbow_phase() + offset, 0.95, 1.0)
@@ -612,7 +624,7 @@ pub fn gauge(ui: &mut Ui, size: f32, frac: f32, value: &str, unit: &str, label: 
     };
     p.add(Shape::line(arc(start, start + sweep), Stroke::new(8.0, CARD_HI())));
     let f = frac.clamp(0.0, 1.0);
-    if f > 0.001 && is_neon() {
+    if f > 0.001 && bold_graphs() {
         // Neon: a glow under the arc and a cyan → magenta sweep along it.
         let pts = arc(start, start + sweep * f);
         let (a, b) = (CYAN(), ACCENT());
@@ -667,7 +679,7 @@ pub fn sparkline(ui: &mut Ui, values: &[f32], lo: f32, hi: f32, color: Color32, 
             Stroke::NONE,
         ));
     }
-    if is_neon() {
+    if bold_graphs() {
         let glow = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 40);
         p.add(Shape::line(pts.clone(), Stroke::new(7.0, glow)));
     }
@@ -705,7 +717,7 @@ pub fn history_graph(
     height: f32,
     line: Line,
 ) -> Rect {
-    let rgb = line == Line::Rainbow && is_neon();
+    let rgb = line == Line::Rainbow && bold_graphs();
     let heat = line == Line::Heat;
     let (lo, hi) = range;
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
@@ -760,7 +772,7 @@ pub fn history_graph(
             p.line_segment([w[0], w[1]], Stroke::new(2.4, at(i)));
         }
     } else {
-        if is_neon() {
+        if bold_graphs() {
             p.add(Shape::line(pts.clone(), Stroke::new(7.0, alpha(color, 40))));
         }
         p.add(Shape::line(pts.clone(), Stroke::new(2.0, color)));
@@ -826,7 +838,7 @@ pub fn multi_graph(ui: &mut Ui, series: &[Series], range: (f32, f32), ticks: &[f
                     Stroke::NONE,
                 ));
             }
-            if is_neon() {
+            if bold_graphs() {
                 p.add(Shape::line(pts.clone(), Stroke::new(7.0, alpha(s.color, 40))));
             }
         }

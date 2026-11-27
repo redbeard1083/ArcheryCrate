@@ -404,6 +404,9 @@ impl CrateApp {
         let on_battery = self.snap.on_ac == Some(false);
         crate::widgets::set_calm(self.settings.neon_calm || (self.settings.battery_calm && on_battery));
         crate::widgets::set_rainbow_speed(self.settings.rainbow_speed.unwrap_or(1.0));
+        // ARCHERYCRATE_BOLD_GRAPHS=1 turns them on for a screenshot without changing the setting.
+        let bold_shot = self.shot.is_some() && std::env::var_os("ARCHERYCRATE_BOLD_GRAPHS").is_some();
+        crate::widgets::set_bold_graphs(self.settings.bold_graphs || bold_shot);
         // Neon's rainbow moves: keep drawing (about 30 times a second) while it does.
         if crate::widgets::rainbow_moving() {
             ctx.request_repaint_after(Duration::from_millis(33));
@@ -985,7 +988,7 @@ impl CrateApp {
             .then(|| self.hist_batt_w.iter().sum::<f32>() / self.hist_batt_w.len() as f32);
 
         // 3 + 4. One load graph for the CPU and both GPUs; an idle discrete GPU is dimmed.
-        let series_color = |k: usize, fixed: Color32| if is_neon() { rainbow(k as f32 / 3.0) } else { fixed };
+        let series_color = |k: usize, fixed: Color32| if bold_graphs() { rainbow(k as f32 / 3.0) } else { fixed };
         let clock_text = |m: u32| if m == 0 { "clock idle".to_string() } else { format!("{m} MHz") };
         let mut cols = vec![Col {
             name: "CPU".into(),
@@ -2365,7 +2368,21 @@ impl CrateApp {
                 .color(DIM())
                 .size(12.5),
         );
-        if matches!(self.settings.theme, settings::Theme::Neon | settings::Theme::NeonLight) {
+        // The theme on screen (a --theme override for screenshots counts too).
+        let neon = matches!(self.theme_override.unwrap_or(self.settings.theme), settings::Theme::Neon | settings::Theme::NeonLight);
+        if !neon {
+            // Dark and Light: try Neon's graphs without the rest of its look.
+            ui.horizontal(|ui| {
+                let mut on = self.settings.bold_graphs;
+                if switch(ui, &mut on).changed() {
+                    self.settings.bold_graphs = on;
+                    self.settings.save();
+                }
+                ui.label("Bold rainbow graphs");
+                ui.label(RichText::new("(Neon's glowing lines and moving rainbow)").color(DIM()));
+            });
+        }
+        if neon || self.settings.bold_graphs {
             ui.horizontal(|ui| {
                 let mut calm = self.settings.neon_calm;
                 if switch(ui, &mut calm).changed() {
