@@ -189,17 +189,18 @@ pub fn set_calm(calm: bool) {
 
 /// Whether Neon's colours are moving right now (the window then keeps redrawing).
 pub fn rainbow_moving() -> bool {
-    bold_graphs() && !CALM.load(Ordering::Relaxed)
+    // Neon's title underline and top strip move even when its graphs are plain.
+    (is_neon() || bold_graphs()) && !CALM.load(Ordering::Relaxed)
 }
 
 pub fn set_bold_graphs(on: bool) {
     BOLD_GRAPHS.store(on, Ordering::Relaxed);
 }
 
-/// Graphs with glowing lines, rainbow load lines and the gauge's colour sweep: always in Neon,
-/// and in Dark and Light when "Bold rainbow graphs" is on.
+/// Graphs with glowing lines, rainbow load lines and the gauge's colour sweep: Settings' "Bold
+/// rainbow graphs" for the theme in use (on by default in the Neon themes).
 pub fn bold_graphs() -> bool {
-    is_neon() || BOLD_GRAPHS.load(Ordering::Relaxed)
+    BOLD_GRAPHS.load(Ordering::Relaxed)
 }
 
 /// Where the moving rainbow is, in turns (0..1 is one full cycle, about every 6 s).

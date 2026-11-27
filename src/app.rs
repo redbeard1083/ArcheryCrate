@@ -406,7 +406,11 @@ impl CrateApp {
         crate::widgets::set_rainbow_speed(self.settings.rainbow_speed.unwrap_or(1.0));
         // ARCHERYCRATE_BOLD_GRAPHS=1 turns them on for a screenshot without changing the setting.
         let bold_shot = self.shot.is_some() && std::env::var_os("ARCHERYCRATE_BOLD_GRAPHS").is_some();
-        crate::widgets::set_bold_graphs(self.settings.bold_graphs || bold_shot);
+        let neon_theme = matches!(theme, settings::Theme::Neon | settings::Theme::NeonLight);
+        let bold = if neon_theme { !self.settings.neon_plain_graphs } else { self.settings.bold_graphs };
+        // ARCHERYCRATE_PLAIN_GRAPHS=1 turns them off for a screenshot.
+        let plain_shot = self.shot.is_some() && std::env::var_os("ARCHERYCRATE_PLAIN_GRAPHS").is_some();
+        crate::widgets::set_bold_graphs((bold || bold_shot) && !plain_shot);
         // Neon's rainbow moves: keep drawing (about 30 times a second) while it does.
         if crate::widgets::rainbow_moving() {
             ctx.request_repaint_after(Duration::from_millis(33));
@@ -2370,18 +2374,21 @@ impl CrateApp {
         );
         // The theme on screen (a --theme override for screenshots counts too).
         let neon = matches!(self.theme_override.unwrap_or(self.settings.theme), settings::Theme::Neon | settings::Theme::NeonLight);
-        if !neon {
-            // Dark and Light: try Neon's graphs without the rest of its look.
-            ui.horizontal(|ui| {
-                let mut on = self.settings.bold_graphs;
-                if switch(ui, &mut on).changed() {
+        // Glowing lines and the moving rainbow on the graphs, for this kind of theme: Dark and
+        // Light keep one choice (off at first), the two Neon themes another (on at first).
+        ui.horizontal(|ui| {
+            let mut on = if neon { !self.settings.neon_plain_graphs } else { self.settings.bold_graphs };
+            if switch(ui, &mut on).changed() {
+                if neon {
+                    self.settings.neon_plain_graphs = !on;
+                } else {
                     self.settings.bold_graphs = on;
-                    self.settings.save();
                 }
-                ui.label("Bold rainbow graphs");
-                ui.label(RichText::new("(Neon's glowing lines and moving rainbow)").color(DIM()));
-            });
-        }
+                self.settings.save();
+            }
+            ui.label("Bold rainbow graphs");
+            ui.label(RichText::new("(glowing lines and a moving rainbow)").color(DIM()));
+        });
         if neon || self.settings.bold_graphs {
             ui.horizontal(|ui| {
                 let mut calm = self.settings.neon_calm;
