@@ -1841,7 +1841,7 @@ impl CrateApp {
                 if row(ui, &mut st.battery_60hz, "Screen at 60 Hz", "") {
                     changes.push((Item::Refresh, st.battery_60hz));
                 }
-                if has_overdrive && row(ui, &mut st.battery_overdrive_off, "Panel overdrive off", "(saves a little power)") {
+                if has_overdrive && row(ui, &mut st.battery_overdrive_off, "Panel overdrive off", "") {
                     changes.push((Item::Overdrive, st.battery_overdrive_off));
                 }
                 if row(ui, &mut st.battery_backlight, "Screen brightness", "") {
