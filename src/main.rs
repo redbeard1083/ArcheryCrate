@@ -131,12 +131,20 @@ fn main() -> eframe::Result<()> {
         .with_title("ArcheryCrate")
         .with_app_id("io.github.archerycrate.ArcheryCrate")
         .with_inner_size([1240.0, 820.0])
-        .with_min_inner_size([980.0, 640.0])
+        // Small enough for a 720p screen; the pages scale down to fit (see `fit_to_screen`).
+        .with_min_inner_size([760.0, 480.0])
         .with_icon(icon)
         .with_visible(!hidden);
     if screenshot.is_some() {
         // Never steal focus from the person while a check runs.
         viewport = viewport.with_active(false);
+        // ARCHERYCRATE_SHOT_SIZE=1280x660 photographs the window at another size (e.g. 720p).
+        if let Some((w, h)) = std::env::var("ARCHERYCRATE_SHOT_SIZE")
+            .ok()
+            .and_then(|v| v.split_once('x').and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))))
+        {
+            viewport = viewport.with_inner_size([w, h]);
+        }
     }
 
     let options = eframe::NativeOptions { viewport, wgpu_options: window_gpu(), ..Default::default() };

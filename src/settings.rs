@@ -44,6 +44,9 @@ pub struct Settings {
     /// How fast Neon's rainbow moves, as a multiple of the normal speed (None = normal).
     #[serde(default)]
     pub rainbow_speed: Option<f32>,
+    /// Interface size as a multiple (0.8…1.1); None = fit the window (shrinks on small screens).
+    #[serde(default)]
+    pub ui_scale: Option<f32>,
     /// How much history Home's graphs show, in seconds (60, 300 or 900; None = 60).
     #[serde(default)]
     pub home_range_secs: Option<u32>,
@@ -174,10 +177,16 @@ fn path() -> PathBuf {
 
 impl Settings {
     pub fn load() -> Self {
-        std::fs::read_to_string(path())
+        let mut s: Self = std::fs::read_to_string(path())
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_else(|| serde_json::from_str("{}").unwrap_or_default())
+            .unwrap_or_else(|| serde_json::from_str("{}").unwrap_or_default());
+        // Keyboard off and dimmed on battery exclude each other (older versions allowed both;
+        // "off" won then, so keep that).
+        if s.kbd_off_on_battery && s.battery_kbd_dim {
+            s.battery_kbd_dim = false;
+        }
+        s
     }
 
     pub fn save(&self) {

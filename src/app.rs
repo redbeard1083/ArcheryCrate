@@ -169,6 +169,8 @@ pub struct CrateApp {
     hist_batt_w: VecDeque<f32>,
     /// Height of the visible page area (for the 3×3 Home grid).
     view_h: f32,
+    /// Whether the window has been fitted to a small screen yet (first frames only).
+    screen_fitted: bool,
     /// System RAM and GPU memory in use, in percent.
     hist_mem: VecDeque<f32>,
     hist_vram: VecDeque<f32>,
@@ -321,6 +323,7 @@ impl CrateApp {
             hist_igpu_load: VecDeque::new(),
             hist_batt_w: VecDeque::new(),
             view_h: 800.0,
+            screen_fitted: false,
             hist_mem: VecDeque::new(),
             hist_vram: VecDeque::new(),
             hist_fans: Vec::new(),
@@ -977,23 +980,6 @@ impl CrateApp {
         let package_w = s.igpu().and_then(|x| x.power_w);
         let batt_avg = (!self.hist_batt_w.is_empty())
             .then(|| self.hist_batt_w.iter().sum::<f32>() / self.hist_batt_w.len() as f32);
-
-        // 6. How much history the graphs show.
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let ranges = [60u32, 300, 900];
-                let mut i = ranges.iter().position(|r| *r as usize == secs).unwrap_or(0);
-                // Right-to-left: give the buttons in reverse so they read 1, 5, 15.
-                let mut rev = 2 - i;
-                if segmented(ui, &["15 min", "5 min", "1 min"], &mut rev) {
-                    i = 2 - rev;
-                    self.settings.home_range_secs = Some(ranges[i]);
-                    self.settings.save();
-                }
-                ui.label(RichText::new("Graphs show the last").color(DIM()));
-            });
-        });
-        ui.add_space(2.0);
 
         // 3 + 4. One load graph for the CPU and both GPUs; an idle discrete GPU is dimmed.
         let series_color = |k: usize, fixed: Color32| if is_neon() { rainbow(k as f32 / 3.0) } else { fixed };
@@ -1864,10 +1850,17 @@ impl CrateApp {
                         }
                     });
                 });
+                // Off and dimmed can't both apply: switching one on switches the other off.
                 if row(ui, &mut st.kbd_off_on_battery, "Keyboard light off", "") {
+                    if st.kbd_off_on_battery {
+                        st.battery_kbd_dim = false;
+                    }
                     changes.push((Item::Keyboard, st.kbd_off_on_battery || st.battery_kbd_dim));
                 }
                 if row(ui, &mut st.battery_kbd_dim, "Dim the keyboard light", "") {
+                    if st.battery_kbd_dim {
+                        st.kbd_off_on_battery = false;
+                    }
                     changes.push((Item::Keyboard, st.kbd_off_on_battery || st.battery_kbd_dim));
                 }
                 ui.add_enabled_ui(st.battery_kbd_dim && !st.kbd_off_on_battery, |ui| {
@@ -1890,9 +1883,6 @@ impl CrateApp {
                         }
                     });
                 });
-                if st.kbd_off_on_battery && st.battery_kbd_dim {
-                    ui.label(RichText::new("\"Off\" wins while both are on.").color(DIM()).size(12.5));
-                }
             });
         });
         if calm_changed {
@@ -2334,6 +2324,37 @@ impl CrateApp {
                         self.settings.save();
                     }
                 });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Home graphs show").color(DIM()));
+                    let ranges = [60u32, 300, 900];
+                    let secs = self.settings.home_range_secs.unwrap_or(60);
+                    let mut i = ranges.iter().position(|r| *r == secs).unwrap_or(0);
+                    if segmented(ui, &["1 min", "5 min", "15 min"], &mut i) {
+                        self.settings.home_range_secs = Some(ranges[i]);
+                        self.settings.save();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Interface size").color(DIM()));
+                    let sizes = [None, Some(0.8f32), Some(0.9), Some(1.0), Some(1.1)];
+                    let mut i = sizes
+                        .iter()
+                        .position(|z| match (z, self.settings.ui_scale) {
+                            (None, None) => true,
+                            (Some(a), Some(b)) => (a - b).abs() < 0.01,
+                            _ => false,
+                        })
+                        .unwrap_or(0);
+                    if segmented(ui, &["Auto", "80%", "90%", "100%", "110%"], &mut i) {
+                        self.settings.ui_scale = sizes[i];
+                        self.settings.save();
+                    }
+                });
+                ui.label(
+                    RichText::new("Auto shrinks everything to fit small screens and windows (such as 720p).")
+                        .color(DIM())
+                        .size(12.5),
+                );
                 if self.settings.theme == settings::Theme::Neon {
                     ui.horizontal(|ui| {
                         let mut calm = self.settings.neon_calm;
@@ -2864,6 +2885,33 @@ fn short_version(v: &str) -> String {
         .to_string()
 }
 
+/// The window size the pages are laid out for; smaller windows are scaled down to it.
+const DESIGN_W: f32 = 1120.0;
+const DESIGN_H: f32 = 780.0;
+
+impl CrateApp {
+    /// Small screens (a 720p laptop): start maximised, and scale the interface down so the
+    /// pages still fit; Settings › Interface size can fix the size instead.
+    fn fit_to_screen(&mut self, ctx: &egui::Context) {
+        if self.shot.is_none() && !self.screen_fitted {
+            if let Some(m) = ctx.input(|i| i.viewport().monitor_size) {
+                self.screen_fitted = true;
+                if m.x < 1400.0 || m.y < 900.0 {
+                    ctx.send_viewport_cmd(ViewportCommand::Maximized(true));
+                }
+            }
+        }
+        let zoom = ctx.zoom_factor();
+        // The window's size before any scaling, so the choice doesn't feed back on itself.
+        let native = ctx.content_rect().size() * zoom;
+        let fit = (native.x / DESIGN_W).min(native.y / DESIGN_H).clamp(0.7, 1.0);
+        let want = self.settings.ui_scale.unwrap_or(fit);
+        if (want - zoom).abs() > 0.01 {
+            ctx.set_zoom_factor(want);
+        }
+    }
+}
+
 impl eframe::App for CrateApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
@@ -2872,6 +2920,7 @@ impl eframe::App for CrateApp {
         self.take_stock();
         self.send_pending_fans();
         self.follow_theme(ctx);
+        self.fit_to_screen(ctx);
         // The window really closes (Wayland can't hide one); whether the tray icon stays
         // running in its own process decides between "close to tray" and "quit".
         if ctx.input(|i| i.viewport().close_requested()) && self.shot.is_none() {
