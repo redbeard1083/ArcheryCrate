@@ -2264,181 +2264,196 @@ impl CrateApp {
         );
     }
 
+    /// Settings › App: start-up, tray, theme, Home layout, sizes, Neon options.
+    fn app_settings(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let mut on = self.autostart;
+            if switch(ui, &mut on).changed() {
+                match tray::set_autostart(on) {
+                    Ok(()) => self.autostart = on,
+                    Err(e) => self.tray_error = Some(format!("autostart: {e}")),
+                }
+            }
+            ui.label("Start ArcheryCrate when I log in (in the tray)");
+        });
+        ui.horizontal(|ui| {
+            let mut on = self.settings.tray_icon;
+            if switch(ui, &mut on).changed() {
+                self.settings.tray_icon = on;
+                self.settings.save();
+                if on && self.shot.is_none() {
+                    self.start_tray();
+                } else if !on {
+                    crate::daemon::quit_tray();
+                }
+            }
+            ui.label("Show an icon in the system tray");
+        });
+        ui.horizontal(|ui| {
+            let mut on = self.settings.close_to_tray;
+            if switch(ui, &mut on).changed() {
+                self.settings.close_to_tray = on;
+                self.settings.save();
+            }
+            ui.label("Closing the window keeps it running in the tray");
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Theme").color(DIM()));
+            let opts = [
+                settings::Theme::System,
+                settings::Theme::Dark,
+                settings::Theme::Light,
+                settings::Theme::Neon,
+                settings::Theme::NeonLight,
+            ];
+            let mut i = opts.iter().position(|t| *t == self.settings.theme).unwrap_or(0);
+            if segmented(ui, &["Follow system", "Dark", "Light", "Neon", "Light Neon"], &mut i) {
+                self.settings.theme = opts[i];
+                self.settings.save();
+                if opts[i] == settings::Theme::System {
+                    // Look the desktop's preference up now rather than in a few seconds.
+                    let now = crate::widgets::system_prefers_dark();
+                    if let Ok(mut g) = self.system_dark.lock() {
+                        *g = now;
+                    }
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Home layout").color(DIM()));
+            let mut i = self.settings.home_grid as usize;
+            if segmented(ui, &["Detailed", "3×3 grid"], &mut i) {
+                self.settings.home_grid = i == 1;
+                self.settings.save();
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Home graphs show").color(DIM()));
+            let ranges = [60u32, 300, 900];
+            let secs = self.settings.home_range_secs.unwrap_or(60);
+            let mut i = ranges.iter().position(|r| *r == secs).unwrap_or(0);
+            if segmented(ui, &["1 min", "5 min", "15 min"], &mut i) {
+                self.settings.home_range_secs = Some(ranges[i]);
+                self.settings.save();
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Interface size").color(DIM()));
+            let sizes = [None, Some(0.8f32), Some(0.9), Some(1.0), Some(1.1)];
+            let mut i = sizes
+                .iter()
+                .position(|z| match (z, self.settings.ui_scale) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => (a - b).abs() < 0.01,
+                    _ => false,
+                })
+                .unwrap_or(0);
+            if segmented(ui, &["Auto", "80%", "90%", "100%", "110%"], &mut i) {
+                self.settings.ui_scale = sizes[i];
+                self.settings.save();
+            }
+        });
+        ui.label(
+            RichText::new("Auto shrinks everything to fit small screens and windows (such as 720p).")
+                .color(DIM())
+                .size(12.5),
+        );
+        if matches!(self.settings.theme, settings::Theme::Neon | settings::Theme::NeonLight) {
+            ui.horizontal(|ui| {
+                let mut calm = self.settings.neon_calm;
+                if switch(ui, &mut calm).changed() {
+                    self.settings.neon_calm = calm;
+                    self.settings.save();
+                }
+                ui.label("Calm it down");
+                ui.label(RichText::new("(the rainbow stops moving)").color(DIM()));
+            });
+            ui.add_enabled_ui(!self.settings.neon_calm, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Rainbow speed").color(DIM()));
+                    let mut sp = self.settings.rainbow_speed.unwrap_or(1.0);
+                    ui.spacing_mut().slider_width = 220.0;
+                    let r = ui.add(
+                        egui::Slider::new(&mut sp, 0.25..=3.0)
+                            .step_by(0.25)
+                            .custom_formatter(|v, _| format!("{v:.2}×")),
+                    );
+                    if r.changed() {
+                        self.settings.rainbow_speed = Some(sp);
+                        crate::widgets::set_rainbow_speed(sp);
+                    }
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        self.settings.save();
+                    }
+                    ui.label(RichText::new(match sp {
+                        s if s < 0.75 => "slow",
+                        s if s <= 1.25 => "normal",
+                        _ => "fast",
+                    }).color(DIM()));
+                });
+            });
+        }
+        ui.horizontal(|ui| {
+            let can = self.settings.tray_icon && self.tray_error.is_none();
+            ui.add_enabled_ui(can, |ui| {
+                if ui.button("Minimize to tray now").clicked() {
+                    self.close_to_tray();
+                }
+            });
+            if ui.button("Quit ArcheryCrate").clicked() {
+                self.quit();
+            }
+        });
+        if let Some(e) = &self.tray_error {
+            ui.label(RichText::new(format!("Tray unavailable: {e}")).color(AMBER()));
+        }
+    }
+
+    /// Settings › Display and firmware: panel overdrive, start-up sound, the screen's mode.
+    fn firmware_settings(&mut self, ui: &mut Ui) {
+        let mut pending = Vec::new();
+        for name in ["panel_overdrive", "boot_sound"] {
+            if let Some(a) = self.snap.attr(name) {
+                let mut on = a.current.unwrap_or(0) != 0;
+                ui.horizontal(|ui| {
+                    if switch(ui, &mut on).changed() {
+                        pending.push(ctl::set_attr(name, &a.path, on as i64));
+                    }
+                    ui.label(match name {
+                        "panel_overdrive" => "Panel overdrive (sharper motion on the screen)",
+                        _ => "Play the start-up sound",
+                    });
+                });
+            }
+        }
+        if self.snap.attrs.is_empty() {
+            ui.label(RichText::new("No firmware settings found on this kernel.").color(DIM()));
+        }
+        for p in pending {
+            self.run(p);
+        }
+        let info = self.panel_info.lock().ok().and_then(|g| g.clone());
+        if let Some(i) = info {
+            ui.label(RichText::new(format!("Screen now: {i}")).color(DIM()).size(12.5));
+        }
+    }
+
     fn system(&mut self, ui: &mut Ui) {
         page_title(ui, "Settings", "Setup, how ArcheryCrate starts, plus display and firmware options.");
         self.setup_card(ui);
-        ui.columns(2, |cols| {
-            card(&mut cols[0], "App", |ui| {
-                ui.horizontal(|ui| {
-                    let mut on = self.autostart;
-                    if switch(ui, &mut on).changed() {
-                        match tray::set_autostart(on) {
-                            Ok(()) => self.autostart = on,
-                            Err(e) => self.tray_error = Some(format!("autostart: {e}")),
-                        }
-                    }
-                    ui.label("Start ArcheryCrate when I log in (in the tray)");
-                });
-                ui.horizontal(|ui| {
-                    let mut on = self.settings.tray_icon;
-                    if switch(ui, &mut on).changed() {
-                        self.settings.tray_icon = on;
-                        self.settings.save();
-                        if on && self.shot.is_none() {
-                            self.start_tray();
-                        } else if !on {
-                            crate::daemon::quit_tray();
-                        }
-                    }
-                    ui.label("Show an icon in the system tray");
-                });
-                ui.horizontal(|ui| {
-                    let mut on = self.settings.close_to_tray;
-                    if switch(ui, &mut on).changed() {
-                        self.settings.close_to_tray = on;
-                        self.settings.save();
-                    }
-                    ui.label("Closing the window keeps it running in the tray");
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Theme").color(DIM()));
-                    let opts = [
-                        settings::Theme::System,
-                        settings::Theme::Dark,
-                        settings::Theme::Light,
-                        settings::Theme::Neon,
-                        settings::Theme::NeonLight,
-                    ];
-                    let mut i = opts.iter().position(|t| *t == self.settings.theme).unwrap_or(0);
-                    if segmented(ui, &["Follow system", "Dark", "Light", "Neon", "Light Neon"], &mut i) {
-                        self.settings.theme = opts[i];
-                        self.settings.save();
-                        if opts[i] == settings::Theme::System {
-                            // Look the desktop's preference up now rather than in a few seconds.
-                            let now = crate::widgets::system_prefers_dark();
-                            if let Ok(mut g) = self.system_dark.lock() {
-                                *g = now;
-                            }
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Home layout").color(DIM()));
-                    let mut i = self.settings.home_grid as usize;
-                    if segmented(ui, &["Detailed", "3×3 grid"], &mut i) {
-                        self.settings.home_grid = i == 1;
-                        self.settings.save();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Home graphs show").color(DIM()));
-                    let ranges = [60u32, 300, 900];
-                    let secs = self.settings.home_range_secs.unwrap_or(60);
-                    let mut i = ranges.iter().position(|r| *r == secs).unwrap_or(0);
-                    if segmented(ui, &["1 min", "5 min", "15 min"], &mut i) {
-                        self.settings.home_range_secs = Some(ranges[i]);
-                        self.settings.save();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Interface size").color(DIM()));
-                    let sizes = [None, Some(0.8f32), Some(0.9), Some(1.0), Some(1.1)];
-                    let mut i = sizes
-                        .iter()
-                        .position(|z| match (z, self.settings.ui_scale) {
-                            (None, None) => true,
-                            (Some(a), Some(b)) => (a - b).abs() < 0.01,
-                            _ => false,
-                        })
-                        .unwrap_or(0);
-                    if segmented(ui, &["Auto", "80%", "90%", "100%", "110%"], &mut i) {
-                        self.settings.ui_scale = sizes[i];
-                        self.settings.save();
-                    }
-                });
-                ui.label(
-                    RichText::new("Auto shrinks everything to fit small screens and windows (such as 720p).")
-                        .color(DIM())
-                        .size(12.5),
-                );
-                if matches!(self.settings.theme, settings::Theme::Neon | settings::Theme::NeonLight) {
-                    ui.horizontal(|ui| {
-                        let mut calm = self.settings.neon_calm;
-                        if switch(ui, &mut calm).changed() {
-                            self.settings.neon_calm = calm;
-                            self.settings.save();
-                        }
-                        ui.label("Calm it down");
-                        ui.label(RichText::new("(the rainbow stops moving)").color(DIM()));
-                    });
-                    ui.add_enabled_ui(!self.settings.neon_calm, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Rainbow speed").color(DIM()));
-                            let mut sp = self.settings.rainbow_speed.unwrap_or(1.0);
-                            ui.spacing_mut().slider_width = 220.0;
-                            let r = ui.add(
-                                egui::Slider::new(&mut sp, 0.25..=3.0)
-                                    .step_by(0.25)
-                                    .custom_formatter(|v, _| format!("{v:.2}×")),
-                            );
-                            if r.changed() {
-                                self.settings.rainbow_speed = Some(sp);
-                                crate::widgets::set_rainbow_speed(sp);
-                            }
-                            if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                                self.settings.save();
-                            }
-                            ui.label(RichText::new(match sp {
-                                s if s < 0.75 => "slow",
-                                s if s <= 1.25 => "normal",
-                                _ => "fast",
-                            }).color(DIM()));
-                        });
-                    });
-                }
-                ui.horizontal(|ui| {
-                    let can = self.settings.tray_icon && self.tray_error.is_none();
-                    ui.add_enabled_ui(can, |ui| {
-                        if ui.button("Minimize to tray now").clicked() {
-                            self.close_to_tray();
-                        }
-                    });
-                    if ui.button("Quit ArcheryCrate").clicked() {
-                        self.quit();
-                    }
-                });
-                if let Some(e) = &self.tray_error {
-                    ui.label(RichText::new(format!("Tray unavailable: {e}")).color(AMBER()));
-                }
+        // Side by side when there's room for the App card's rows of buttons; stacked otherwise,
+        // so the two never overlap in a narrow window.
+        if ui.available_width() >= 1250.0 {
+            ui.columns(2, |cols| {
+                card(&mut cols[0], "App", |ui| self.app_settings(ui));
+                card(&mut cols[1], "Display and firmware", |ui| self.firmware_settings(ui));
             });
-            card(&mut cols[1], "Display and firmware", |ui| {
-                let mut pending = Vec::new();
-                for name in ["panel_overdrive", "boot_sound"] {
-                    if let Some(a) = self.snap.attr(name) {
-                        let mut on = a.current.unwrap_or(0) != 0;
-                        ui.horizontal(|ui| {
-                            if switch(ui, &mut on).changed() {
-                                pending.push(ctl::set_attr(name, &a.path, on as i64));
-                            }
-                            ui.label(match name {
-                                "panel_overdrive" => "Panel overdrive (sharper motion on the screen)",
-                                _ => "Play the start-up sound",
-                            });
-                        });
-                    }
-                }
-                if self.snap.attrs.is_empty() {
-                    ui.label(RichText::new("No firmware settings found on this kernel.").color(DIM()));
-                }
-                for p in pending {
-                    self.run(p);
-                }
-                let info = self.panel_info.lock().ok().and_then(|g| g.clone());
-                if let Some(i) = info {
-                    ui.label(RichText::new(format!("Screen now: {i}")).color(DIM()).size(12.5));
-                }
-            });
-        });
+        } else {
+            card(ui, "App", |ui| self.app_settings(ui));
+            ui.add_space(4.0);
+            card(ui, "Display and firmware", |ui| self.firmware_settings(ui));
+        }
+        ui.add_space(4.0);
         card(ui, "About ArcheryCrate", |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("ArcheryCrate").size(18.0).color(TEXT()));
