@@ -663,42 +663,34 @@ impl CrateApp {
                 self.page = page;
             }
         }
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                let (txt, col) = if !self.tools.checked {
-                    ("Looking for asusctl…".to_string(), DIM())
-                } else if let Some(v) = &self.tools.asusctl {
-                    (format!("asusctl {}", short_version(v)), GREEN())
-                } else {
-                    ("asusctl not found".to_string(), AMBER())
-                };
-                ui.painter().circle_filled(ui.cursor().min + vec2(4.0, 9.0), 4.0, col);
-                ui.add_space(12.0);
-                ui.label(RichText::new(txt).size(12.0).color(DIM()));
-            });
-            ui.horizontal(|ui| {
-                ui.add_space(14.0);
-                ui.label(RichText::new(short_model(&self.snap.model)).size(12.0).color(DIM()));
-            });
-        });
     }
 
     fn status_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
-            let p = self.snap.profile.clone().unwrap_or_default();
-            pill(ui, &format!("Mode: {}", profile_title(&p)), profile_color(&p));
-            if let Some(t) = self.snap.cpu_temp_c {
+            let s = &self.snap;
+            if let Some(t) = s.cpu_temp_c {
                 pill(ui, &format!("CPU {t:.0}°C"), temp_color(t));
             }
-            for (label, rpm) in &self.snap.fans {
+            // The GPU Home follows: the discrete one while awake, else the integrated one.
+            let gpu = home_gpu(s);
+            if let Some(t) = gpu.as_ref().and_then(|g| g.temp_c) {
+                pill(ui, &format!("GPU {t:.0}°C"), temp_color(t));
+            }
+            for (label, rpm) in &s.fans {
                 pill(ui, &format!("{} {rpm} rpm", fan_label(label)), DIM());
             }
-            if let Some(b) = self.snap.battery_pct {
-                let plug = if self.snap.on_ac == Some(true) { " ⚡" } else { "" };
+            if let Some(b) = s.battery_pct {
+                let plug = if s.on_ac == Some(true) { " ⚡" } else { "" };
                 pill(ui, &format!("Battery {b}%{plug}"), battery_color(b as f32));
+            }
+            if let (Some(u), Some(t)) = (s.mem_used_gb, s.mem_total_gb) {
+                let f = u / t.max(0.1);
+                pill(ui, &format!("RAM {:.0}%", f * 100.0), level_color(f, DIM()));
+            }
+            if let Some((Some(u), Some(t))) = gpu.as_ref().map(|g| (g.vram_used_mb, g.vram_total_mb)) {
+                let f = u as f32 / t.max(1) as f32;
+                pill(ui, &format!("GPU RAM {:.0}%", f * 100.0), level_color(f, DIM()));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
@@ -949,7 +941,8 @@ impl CrateApp {
     }
 
     fn home(&mut self, ui: &mut Ui) {
-        page_title(ui, "Home", &format!("{} · {}", short_model(&self.snap.model), self.snap.cpu_name));
+        // The laptop itself is the heading here.
+        page_title(ui, &format!("{} · {}", short_model(&self.snap.model), self.snap.cpu_name), "");
         // ARCHERYCRATE_HOME_GRID=1 shows the grid in a screenshot run without changing the setting.
         let grid_shot = self.shot.is_some() && std::env::var_os("ARCHERYCRATE_HOME_GRID").is_some();
         // ARCHERYCRATE_HOME_DETAILED=1 does the opposite.
@@ -2909,13 +2902,6 @@ fn short_model(m: &str) -> String {
         Some((a, b)) if a.ends_with(b) => a.to_string(),
         _ => m.to_string(),
     }
-}
-
-fn short_version(v: &str) -> String {
-    v.split_whitespace()
-        .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))
-        .unwrap_or(v)
-        .to_string()
 }
 
 /// The window size the pages are laid out for; smaller windows are scaled down to it.

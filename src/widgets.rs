@@ -597,7 +597,9 @@ pub fn card<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 pub fn page_title(ui: &mut Ui, title: &str, subtitle: &str) {
     ui.label(RichText::new(title).size(26.0).strong().color(TEXT()));
-    ui.label(RichText::new(subtitle).color(DIM()));
+    if !subtitle.is_empty() {
+        ui.label(RichText::new(subtitle).color(DIM()));
+    }
     if is_neon() {
         // A moving rainbow underline in Neon.
         ui.add_space(2.0);
