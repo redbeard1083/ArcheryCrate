@@ -874,6 +874,9 @@ impl CrateApp {
         if st.battery_60hz {
             auto.push("60 Hz".into());
         }
+        if st.battery_overdrive_off {
+            auto.push("panel overdrive off".into());
+        }
         if st.battery_backlight {
             auto.push(format!("screen {}%", st.battery_backlight_pct));
         }
@@ -1797,6 +1800,7 @@ impl CrateApp {
         use crate::power::Item;
         let mut changes: Vec<(Item, bool)> = Vec::new();
         let mut calm_changed = false;
+        let has_overdrive = self.snap.attr("panel_overdrive").is_some();
         let st = &mut self.settings;
         card(ui, "On battery", |ui| {
             ui.label(
@@ -1836,6 +1840,9 @@ impl CrateApp {
                 ui.label(RichText::new("SCREEN AND KEYBOARD").size(12.0).color(DIM()));
                 if row(ui, &mut st.battery_60hz, "Screen at 60 Hz", "") {
                     changes.push((Item::Refresh, st.battery_60hz));
+                }
+                if has_overdrive && row(ui, &mut st.battery_overdrive_off, "Panel overdrive off", "(saves a little power)") {
+                    changes.push((Item::Overdrive, st.battery_overdrive_off));
                 }
                 if row(ui, &mut st.battery_backlight, "Screen brightness", "") {
                     changes.push((Item::Backlight, st.battery_backlight));

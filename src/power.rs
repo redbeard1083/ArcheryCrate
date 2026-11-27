@@ -32,6 +32,9 @@ struct Saved {
     backlight: Option<u8>,
     #[serde(default)]
     refresh: bool,
+    /// Panel overdrive was on before it was turned off for the battery.
+    #[serde(default)]
+    overdrive: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,6 +88,7 @@ pub enum Item {
     Keyboard,
     Backlight,
     Refresh,
+    Overdrive,
 }
 
 /// The charger was plugged in (`on_battery == false`) or out. Runs in the background.
@@ -257,6 +261,19 @@ fn go_battery(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
             Err(e) => send(note("Screen refresh → 60 Hz", false, e)),
         }
     }
+
+    // 7. Panel overdrive off (only when it's on; it comes back on with the charger).
+    if want(Item::Overdrive, s.battery_overdrive_off) && !saved.overdrive {
+        if let Some(a) = snap.attr("panel_overdrive").filter(|a| a.current == Some(1)) {
+            let mut act = ctl::set_attr("panel_overdrive", &a.path, 0);
+            act.label = "Panel overdrive off (on battery)".into();
+            let o = ctl::run_action(act, tools);
+            if o.ok {
+                saved.overdrive = true;
+            }
+            send(o);
+        }
+    }
     saved.save();
 }
 
@@ -302,6 +319,15 @@ fn go_charger(tools: &Tools, only: Option<Item>, send: &dyn Fn(Outcome)) {
                 Ok(t) => send(note("Screen brightness back", true, t)),
                 Err(e) => send(note("Screen brightness back", false, e)),
             }
+        }
+    }
+    if want(Item::Overdrive) && std::mem::take(&mut saved.overdrive) {
+        saved.save();
+        let snap = Sampler::default().sample();
+        if let Some(a) = snap.attr("panel_overdrive") {
+            let mut act = ctl::set_attr("panel_overdrive", &a.path, 1);
+            act.label = "Panel overdrive back on".into();
+            send(ctl::run_action(act, tools));
         }
     }
     if want(Item::Refresh) && std::mem::take(&mut saved.refresh) {

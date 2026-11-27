@@ -79,6 +79,9 @@ pub struct Settings {
     /// Drop the laptop screen to 60 Hz on battery, back to its fastest rate on the charger.
     #[serde(default)]
     pub battery_60hz: bool,
+    /// Turn panel overdrive off on battery (it uses a little power) and back on on the charger.
+    #[serde(default)]
+    pub battery_overdrive_off: bool,
     /// Turn the keyboard light off on battery and bring it back on the charger.
     #[serde(default)]
     pub kbd_off_on_battery: bool,
