@@ -319,7 +319,13 @@ impl CrateApp {
             rx,
             busy: 0,
             log: Vec::new(),
-            toast: None,
+            // ARCHERYCRATE_SHOW_TOAST=1: a screenshot with a "just applied" message in the status bar.
+            toast: (screenshot.is_some() && std::env::var_os("ARCHERYCRATE_SHOW_TOAST").is_some()).then(|| {
+                (
+                    Instant::now(),
+                    Outcome { label: "Custom fan curves on for Turbo".into(), ok: true, via: "asusctl".into(), log: vec![], needs_reboot: false },
+                )
+            }),
             settings,
             fan_pending: None,
             stock_fetching: None,
@@ -694,14 +700,16 @@ impl CrateApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(8.0);
-                if self.busy > 0 {
+                // Short, so it never runs under the chips; the details are on the Activity page.
+                // When even that doesn't fit, it's left out.
+                let room = ui.available_width() > 190.0;
+                if self.busy > 0 && room {
                     ui.spinner();
                     ui.label(RichText::new("Applying…").color(DIM()));
-                } else if let Some((at, o)) = &self.toast {
+                } else if let (Some((at, o)), true) = (&self.toast, room) {
                     if at.elapsed() < Duration::from_secs(8) {
-                        let (c, mark) = if o.ok { (GREEN(), "✔") } else { (RED(), "✖") };
-                        let via = if o.ok && !o.via.is_empty() { format!("  (via {})", o.via) } else { String::new() };
-                        ui.label(RichText::new(format!("{mark} {}{via}", o.label)).color(c));
+                        let (c, text) = if o.ok { (GREEN(), "✔ Settings applied") } else { (RED(), "✖ Not applied, see Activity") };
+                        ui.label(RichText::new(text).color(c)).on_hover_text(&o.label);
                     }
                 }
             });
