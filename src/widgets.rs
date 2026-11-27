@@ -374,8 +374,10 @@ pub fn neon_icon_color(name: &str) -> Color32 {
 
 /// A neon line icon for a sidebar page, with a soft glow.
 pub fn neon_icon(p: &egui::Painter, name: &str, c: Pos2, r: f32, color: Color32) {
-    // Each icon is drawn twice: a wide faint stroke (the glow), then the bright line.
-    for (w, a) in [(5.0, 50u8), (1.8, 255)] {
+    // Neon draws each icon twice: a wide faint stroke (the glow), then the bright line. The
+    // other themes draw just the line: flat.
+    let passes: &[(f32, u8)] = if is_neon() { &[(5.0, 50), (1.8, 255)] } else { &[(1.8, 255)] };
+    for &(w, a) in passes {
         let col = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a);
         let s = Stroke::new(w, col);
         let pt = |x: f32, y: f32| c + vec2(x, y) * r;
@@ -914,7 +916,7 @@ pub fn mode_tile(ui: &mut Ui, width: f32, icon: &str, title: &str, desc: &str, s
     p.rect_filled(rect, 10.0, fill);
     let edge = if is_neon() && selected { ACCENT() } else if selected { color } else { LINE() };
     p.rect_stroke(rect, 10.0, Stroke::new(if selected { 2.0 } else { 1.0 }, edge), StrokeKind::Inside);
-    // Neon draws its own glowing line icons; the other themes use the emoji.
+    // Line icons in every theme (glowing in Neon, flat otherwise); the emoji is only a fallback.
     let neon_name = match icon {
         "🌙" => Some("silent"),
         "⚖" => Some("balanced"),
@@ -924,7 +926,7 @@ pub fn mode_tile(ui: &mut Ui, width: f32, icon: &str, title: &str, desc: &str, s
         "🎮" => Some("ultimate"),
         _ => None,
     };
-    match neon_name.filter(|_| is_neon()) {
+    match neon_name {
         Some(n) => neon_icon(p, n, rect.left_top() + vec2(34.0, 34.0), 15.0, color),
         None => {
             p.text(rect.left_top() + vec2(18.0, 18.0), Align2::LEFT_TOP, icon, FontId::proportional(28.0), color);

@@ -69,19 +69,6 @@ impl Page {
             Page::Activity => "activity",
         }
     }
-    fn icon(self) -> &'static str {
-        match self {
-            Page::Home => "🏠",
-            Page::Summary => "📝",
-            Page::Performance => "🚀",
-            Page::Fans => "♻",
-            Page::Battery => "🔋",
-            Page::Lighting => "💡",
-            Page::Graphics => "🖥",
-            Page::System => "⚙",
-            Page::Activity => "📋",
-        }
-    }
 }
 
 pub fn profile_title(p: &str) -> &'static str {
@@ -656,21 +643,14 @@ impl CrateApp {
             let col = if sel { TEXT() } else { DIM() };
             let icon_c = rect.left_center() + vec2(33.0, 0.0);
             if crate::widgets::is_neon() {
-                // Neon: drawn line icons, each in its own neon colour (dimmer when not chosen).
+                // Neon: glowing line icons, each in its own neon colour (dimmer when not chosen).
                 let col = crate::widgets::neon_icon_color(page.key());
                 let col = if sel || resp.hovered() { col } else { lerp_color(col, SIDEBAR(), 0.35) };
                 crate::widgets::neon_icon(p, page.key(), icon_c, 10.0, col);
-            } else if page == Page::Fans {
-                // There's no fan emoji: a drawn fan, in the same full-colour style.
-                crate::widgets::fan_icon(p, icon_c, 10.0, Color32::from_rgb(90, 170, 240), true, 1.5);
             } else {
-                p.text(
-                    rect.left_center() + vec2(24.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    page.icon(),
-                    egui::FontId::proportional(17.0),
-                    if sel { ACCENT() } else { DIM() },
-                );
+                // Dark and Light: the same line icons, flat, in the theme's colours.
+                let col = if sel { ACCENT() } else if resp.hovered() { TEXT() } else { DIM() };
+                crate::widgets::neon_icon(p, page.key(), icon_c, 10.0, col);
             }
             p.text(
                 rect.left_center() + vec2(54.0, 0.0),
