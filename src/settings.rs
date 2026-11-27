@@ -32,6 +32,8 @@ pub enum Theme {
     Light,
     /// Cyberpunk: dark with neon colours, glow and a moving rainbow.
     Neon,
+    /// The same neon look on a light background.
+    NeonLight,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

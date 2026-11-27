@@ -23,6 +23,8 @@ pub enum Palette {
     Light = 1,
     /// Cyberpunk: near-black purple backgrounds, neon accents, glow and moving rainbow.
     Neon = 2,
+    /// Neon on a pale background: the same glow and rainbow, deeper accents for contrast.
+    NeonLight = 3,
 }
 
 static PALETTE: AtomicU8 = AtomicU8::new(Palette::Dark as u8);
@@ -35,17 +37,19 @@ pub fn palette() -> Palette {
     match PALETTE.load(Ordering::Relaxed) {
         1 => Palette::Light,
         2 => Palette::Neon,
+        3 => Palette::NeonLight,
         _ => Palette::Dark,
     }
 }
 
 /// Dark-based palettes (Dark and Neon).
 pub fn is_dark() -> bool {
-    palette() != Palette::Light
+    matches!(palette(), Palette::Dark | Palette::Neon)
 }
 
+/// The Neon look (glow, moving rainbow, line icons), dark or light.
 pub fn is_neon() -> bool {
-    palette() == Palette::Neon
+    matches!(palette(), Palette::Neon | Palette::NeonLight)
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -53,71 +57,72 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
 }
 
 /// Pick the colour for the current palette.
-fn pick(dark: Color32, light: Color32, neon: Color32) -> Color32 {
+fn pick(dark: Color32, light: Color32, neon: Color32, neon_light: Color32) -> Color32 {
     match palette() {
         Palette::Dark => dark,
         Palette::Light => light,
         Palette::Neon => neon,
+        Palette::NeonLight => neon_light,
     }
 }
 
 #[allow(non_snake_case)]
 pub fn BG() -> Color32 {
-    pick(rgb(13, 13, 16), rgb(240, 240, 244), rgb(2, 1, 6))
+    pick(rgb(13, 13, 16), rgb(240, 240, 244), rgb(2, 1, 6), rgb(246, 243, 255))
 }
 #[allow(non_snake_case)]
 pub fn SIDEBAR() -> Color32 {
-    pick(rgb(19, 19, 24), rgb(228, 228, 235), rgb(5, 3, 11))
+    pick(rgb(19, 19, 24), rgb(228, 228, 235), rgb(5, 3, 11), rgb(236, 230, 252))
 }
 #[allow(non_snake_case)]
 pub fn CARD() -> Color32 {
-    pick(rgb(26, 26, 32), rgb(255, 255, 255), rgb(7, 4, 15))
+    pick(rgb(26, 26, 32), rgb(255, 255, 255), rgb(7, 4, 15), rgb(255, 255, 255))
 }
 #[allow(non_snake_case)]
 pub fn CARD_HI() -> Color32 {
-    pick(rgb(34, 34, 42), rgb(234, 234, 241), rgb(18, 10, 34))
+    pick(rgb(34, 34, 42), rgb(234, 234, 241), rgb(18, 10, 34), rgb(238, 232, 252))
 }
 #[allow(non_snake_case)]
 pub fn LINE() -> Color32 {
-    pick(rgb(46, 46, 56), rgb(212, 212, 222), rgb(70, 30, 110))
+    pick(rgb(46, 46, 56), rgb(212, 212, 222), rgb(70, 30, 110), rgb(196, 176, 236))
 }
 #[allow(non_snake_case)]
 pub fn TEXT() -> Color32 {
-    pick(rgb(232, 232, 238), rgb(26, 26, 32), rgb(232, 246, 255))
+    pick(rgb(232, 232, 238), rgb(26, 26, 32), rgb(232, 246, 255), rgb(22, 14, 46))
 }
 #[allow(non_snake_case)]
 pub fn DIM() -> Color32 {
-    pick(rgb(140, 140, 155), rgb(98, 98, 112), rgb(160, 150, 205))
+    pick(rgb(140, 140, 155), rgb(98, 98, 112), rgb(160, 150, 205), rgb(98, 86, 140))
 }
 #[allow(non_snake_case)]
 pub fn ACCENT() -> Color32 {
-    pick(rgb(255, 40, 80), rgb(222, 22, 62), rgb(255, 20, 170))
+    pick(rgb(255, 40, 80), rgb(222, 22, 62), rgb(255, 20, 170), rgb(226, 0, 146))
 }
 #[allow(non_snake_case)]
 pub fn ACCENT_DIM() -> Color32 {
-    pick(rgb(120, 22, 42), rgb(250, 204, 214), rgb(96, 8, 76))
+    pick(rgb(120, 22, 42), rgb(250, 204, 214), rgb(96, 8, 76), rgb(255, 204, 236))
 }
 // Deeper accents on light backgrounds so they stay readable on white; electric in Neon.
 #[allow(non_snake_case)]
 pub fn CYAN() -> Color32 {
-    pick(rgb(40, 200, 255), rgb(0, 132, 196), rgb(0, 240, 255))
+    pick(rgb(40, 200, 255), rgb(0, 132, 196), rgb(0, 240, 255), rgb(0, 150, 205))
 }
 #[allow(non_snake_case)]
 pub fn GREEN() -> Color32 {
-    pick(rgb(60, 220, 130), rgb(16, 146, 76), rgb(80, 255, 60))
+    pick(rgb(60, 220, 130), rgb(16, 146, 76), rgb(80, 255, 60), rgb(0, 160, 64))
 }
 #[allow(non_snake_case)]
 pub fn AMBER() -> Color32 {
-    pick(rgb(255, 176, 32), rgb(184, 112, 0), rgb(255, 232, 0))
+    pick(rgb(255, 176, 32), rgb(184, 112, 0), rgb(255, 232, 0), rgb(204, 132, 0))
 }
 /// Something is wrong or too hot (red in every theme, never the theme's accent).
 #[allow(non_snake_case)]
 pub fn RED() -> Color32 {
-    pick(rgb(255, 64, 64), rgb(204, 20, 20), rgb(255, 36, 36))
+    pick(rgb(255, 64, 64), rgb(204, 20, 20), rgb(255, 36, 36), rgb(218, 18, 40))
 }
 #[allow(non_snake_case)]
 pub fn ORANGE() -> Color32 {
-    pick(rgb(255, 128, 40), rgb(206, 84, 0), rgb(255, 120, 0))
+    pick(rgb(255, 128, 40), rgb(206, 84, 0), rgb(255, 120, 0), rgb(226, 96, 0))
 }
 
 /// A temperature's colour on one scale everywhere: cyan when cool, then green, yellow,
@@ -150,20 +155,20 @@ pub fn level_color(frac: f32, base: Color32) -> Color32 {
 /// Background inside graphs and the fan-curve editor.
 #[allow(non_snake_case)]
 pub fn GRAPH_BG() -> Color32 {
-    pick(rgb(18, 18, 22), rgb(246, 246, 250), rgb(1, 0, 4))
+    pick(rgb(18, 18, 22), rgb(246, 246, 250), rgb(1, 0, 4), rgb(248, 246, 255))
 }
 #[allow(non_snake_case)]
 pub fn GRID() -> Color32 {
-    pick(rgb(32, 32, 40), rgb(226, 226, 234), rgb(28, 14, 48))
+    pick(rgb(32, 32, 40), rgb(226, 226, 234), rgb(28, 14, 48), rgb(226, 218, 244))
 }
 /// Background of command boxes (monospace text).
 #[allow(non_snake_case)]
 pub fn CODE_BG() -> Color32 {
-    pick(rgb(12, 12, 15), rgb(232, 232, 239), rgb(1, 0, 4))
+    pick(rgb(12, 12, 15), rgb(232, 232, 239), rgb(1, 0, 4), rgb(240, 235, 252))
 }
 #[allow(non_snake_case)]
 fn HOVER() -> Color32 {
-    pick(rgb(48, 48, 60), rgb(222, 222, 232), rgb(32, 16, 60))
+    pick(rgb(48, 48, 60), rgb(222, 222, 232), rgb(32, 16, 60), rgb(230, 222, 250))
 }
 
 /// Which palette to use; returns true when it changed (then call `apply_theme`).
@@ -204,7 +209,12 @@ pub fn rainbow_phase() -> f32 {
 
 /// A rainbow colour `offset` turns along from the moving phase.
 pub fn rainbow(offset: f32) -> Color32 {
-    hsv(rainbow_phase() + offset, 0.95, 1.0)
+    // A little deeper on Light Neon's pale background, so yellow and cyan stay visible.
+    if palette() == Palette::NeonLight {
+        hsv(rainbow_phase() + offset, 1.0, 0.85)
+    } else {
+        hsv(rainbow_phase() + offset, 0.95, 1.0)
+    }
 }
 
 /// Neon glow: a few widening, fading strokes around `rect` (only in Neon).
@@ -273,7 +283,7 @@ pub fn apply_theme(ctx: &egui::Context) {
     v.window_fill = CARD();
     v.window_stroke = Stroke::new(1.0, LINE());
     v.override_text_color = None;
-    v.extreme_bg_color = pick(rgb(10, 10, 12), rgb(250, 250, 253), rgb(1, 0, 4));
+    v.extreme_bg_color = pick(rgb(10, 10, 12), rgb(250, 250, 253), rgb(1, 0, 4), rgb(250, 248, 255));
     v.faint_bg_color = CARD_HI();
     v.selection.bg_fill = ACCENT_DIM();
     v.selection.stroke = Stroke::new(1.0, ACCENT());
@@ -416,6 +426,77 @@ pub fn neon_icon(p: &egui::Painter, name: &str, c: Pos2, r: f32, color: Color32)
                     let a = k as f32 * std::f32::consts::TAU / 8.0;
                     p.line_segment([pt(a.cos() * 0.55, a.sin() * 0.55), pt(a.cos() * 0.85, a.sin() * 0.85)], s);
                 }
+            }
+            // The mode tiles (Performance, Fans and Graphics pages).
+            "silent" => {
+                // A crescent moon: the outer arc, then the inner arc back.
+                let arc = |cx: f32, cy: f32, rad: f32, from: f32, to: f32| -> Vec<Pos2> {
+                    (0..=20)
+                        .map(|i| {
+                            let a = (from + (to - from) * i as f32 / 20.0).to_radians();
+                            pt(cx + a.cos() * rad, cy + a.sin() * rad)
+                        })
+                        .collect()
+                };
+                let mut v = arc(0.0, 0.0, 0.78, 14.3, 269.1);
+                v.extend(arc(0.38, -0.3, 0.62, 230.8, 52.7));
+                p.add(Shape::line(v, s));
+            }
+            "balanced" => {
+                // Scales: a post on a base, a beam, and a pan hanging from each end.
+                p.line_segment([pt(0.0, -0.7), pt(0.0, 0.75)], s);
+                p.line_segment([pt(-0.4, 0.75), pt(0.4, 0.75)], s);
+                p.line_segment([pt(-0.72, -0.5), pt(0.72, -0.5)], s);
+                p.circle_stroke(pt(0.0, -0.78), 0.08 * r, s);
+                for x in [-0.72, 0.72] {
+                    poly(&[(x - 0.24, 0.1), (x, -0.5), (x + 0.24, 0.1)], false);
+                    let bowl: Vec<Pos2> = (0..=10)
+                        .map(|i| {
+                            let a = std::f32::consts::PI * i as f32 / 10.0;
+                            pt(x + a.cos() * 0.24, 0.1 + a.sin() * 0.16)
+                        })
+                        .collect();
+                    p.add(Shape::line(bowl, s));
+                }
+            }
+            "turbo" => {
+                // A rocket: body with a nose, a window, fins and a flame.
+                poly(&[(0.0, -0.9), (0.28, -0.45), (0.28, 0.35), (-0.28, 0.35), (-0.28, -0.45)], true);
+                p.circle_stroke(pt(0.0, -0.22), 0.12 * r, s);
+                poly(&[(-0.28, 0.0), (-0.55, 0.45), (-0.28, 0.35)], false);
+                poly(&[(0.28, 0.0), (0.55, 0.45), (0.28, 0.35)], false);
+                poly(&[(-0.14, 0.45), (0.0, 0.85), (0.14, 0.45)], false);
+            }
+            "eco" => {
+                // A leaf: two curves from stem to tip, and the midrib.
+                let curve = |c: (f32, f32)| -> Vec<Pos2> {
+                    let (b, t) = ((-0.6f32, 0.6f32), (0.65f32, -0.65f32));
+                    (0..=16)
+                        .map(|i| {
+                            let u = i as f32 / 16.0;
+                            let q = |a: f32, m: f32, z: f32| (1.0 - u) * (1.0 - u) * a + 2.0 * (1.0 - u) * u * m + u * u * z;
+                            pt(q(b.0, c.0, t.0), q(b.1, c.1, t.1))
+                        })
+                        .collect()
+                };
+                p.add(Shape::line(curve((-0.8, -0.7)), s));
+                p.add(Shape::line(curve((0.7, 0.75)), s));
+                p.line_segment([pt(-0.85, 0.85), pt(0.4, -0.4)], s);
+            }
+            "standard" => {
+                // A lightning bolt.
+                poly(&[(0.15, -0.9), (-0.45, 0.1), (-0.02, 0.1), (-0.15, 0.9), (0.45, -0.15), (0.03, -0.15)], true);
+            }
+            "ultimate" => {
+                // A game controller: body with grips, a d-pad and two buttons.
+                poly(
+                    &[(-0.8, -0.35), (0.8, -0.35), (0.95, 0.45), (0.72, 0.62), (0.42, 0.3), (-0.42, 0.3), (-0.72, 0.62), (-0.95, 0.45)],
+                    true,
+                );
+                p.line_segment([pt(-0.62, -0.02), pt(-0.28, -0.02)], s);
+                p.line_segment([pt(-0.45, -0.19), pt(-0.45, 0.15)], s);
+                p.circle_stroke(pt(0.38, -0.08), 0.07 * r, s);
+                p.circle_stroke(pt(0.58, 0.1), 0.07 * r, s);
             }
             _ => {
                 // Activity: a pulse line.
@@ -820,7 +901,22 @@ pub fn mode_tile(ui: &mut Ui, width: f32, icon: &str, title: &str, desc: &str, s
     p.rect_filled(rect, 10.0, fill);
     let edge = if is_neon() && selected { ACCENT() } else if selected { color } else { LINE() };
     p.rect_stroke(rect, 10.0, Stroke::new(if selected { 2.0 } else { 1.0 }, edge), StrokeKind::Inside);
-    p.text(rect.left_top() + vec2(18.0, 18.0), Align2::LEFT_TOP, icon, FontId::proportional(28.0), color);
+    // Neon draws its own glowing line icons; the other themes use the emoji.
+    let neon_name = match icon {
+        "🌙" => Some("silent"),
+        "⚖" => Some("balanced"),
+        "🚀" => Some("turbo"),
+        "🍃" => Some("eco"),
+        "⚡" => Some("standard"),
+        "🎮" => Some("ultimate"),
+        _ => None,
+    };
+    match neon_name.filter(|_| is_neon()) {
+        Some(n) => neon_icon(p, n, rect.left_top() + vec2(34.0, 34.0), 15.0, color),
+        None => {
+            p.text(rect.left_top() + vec2(18.0, 18.0), Align2::LEFT_TOP, icon, FontId::proportional(28.0), color);
+        }
+    }
     p.text(rect.left_top() + vec2(18.0, 62.0), Align2::LEFT_TOP, title, FontId::proportional(19.0), TEXT());
     let galley = p.layout(desc.to_string(), FontId::proportional(12.5), DIM(), width - 36.0);
     p.galley(rect.left_top() + vec2(18.0, 90.0), galley, DIM());

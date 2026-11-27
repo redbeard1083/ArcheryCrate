@@ -90,6 +90,7 @@ fn main() -> eframe::Result<()> {
                     Some("dark") => Some(settings::Theme::Dark),
                     Some("system") => Some(settings::Theme::System),
                     Some("neon") => Some(settings::Theme::Neon),
+                    Some("neon-light") => Some(settings::Theme::NeonLight),
                     _ => None,
                 }
             }

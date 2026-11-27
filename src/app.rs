@@ -2302,9 +2302,15 @@ impl CrateApp {
                 });
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Theme").color(DIM()));
-                    let opts = [settings::Theme::System, settings::Theme::Dark, settings::Theme::Light, settings::Theme::Neon];
+                    let opts = [
+                        settings::Theme::System,
+                        settings::Theme::Dark,
+                        settings::Theme::Light,
+                        settings::Theme::Neon,
+                        settings::Theme::NeonLight,
+                    ];
                     let mut i = opts.iter().position(|t| *t == self.settings.theme).unwrap_or(0);
-                    if segmented(ui, &["Follow system", "Dark", "Light", "Neon"], &mut i) {
+                    if segmented(ui, &["Follow system", "Dark", "Light", "Neon", "Light Neon"], &mut i) {
                         self.settings.theme = opts[i];
                         self.settings.save();
                         if opts[i] == settings::Theme::System {
@@ -2355,7 +2361,7 @@ impl CrateApp {
                         .color(DIM())
                         .size(12.5),
                 );
-                if self.settings.theme == settings::Theme::Neon {
+                if matches!(self.settings.theme, settings::Theme::Neon | settings::Theme::NeonLight) {
                     ui.horizontal(|ui| {
                         let mut calm = self.settings.neon_calm;
                         if switch(ui, &mut calm).changed() {
@@ -2699,6 +2705,7 @@ fn palette_for(theme: settings::Theme, system: Option<bool>) -> crate::widgets::
         settings::Theme::Dark => Palette::Dark,
         settings::Theme::Light => Palette::Light,
         settings::Theme::Neon => Palette::Neon,
+        settings::Theme::NeonLight => Palette::NeonLight,
         settings::Theme::System => {
             if system.unwrap_or(true) {
                 Palette::Dark
